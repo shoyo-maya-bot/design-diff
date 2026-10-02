@@ -1,0 +1,68 @@
+openapi: 3.0.3
+info:
+  title: 会員 API（サンプル）
+  version: 1.0.0
+paths:
+  /api/v1/members/{memberId}:
+    get:
+      x-api-id: API0001
+      operationId: getMember
+      parameters:
+        - name: memberId
+          in: path
+          required: true
+          schema: {type: string, maxLength: 10}
+        - name: includeHistory
+          in: query
+          schema: {type: boolean}
+      responses:
+        "200":
+          description: 正常
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Member"}
+        "404": {description: 会員が存在しない}
+  /api/v1/members:
+    post:
+      x-api-id: API0002
+      operationId: registerMember
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: {type: string, maxLength: 50}
+                email: {type: string, maxLength: 100}
+                phone: {type: string, maxLength: 15}
+      responses:
+        "201":
+          description: 登録した
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [memberId]
+                properties:
+                  memberId: {type: string, maxLength: 10}
+        "400": {description: 入力誤り}
+  /api/v1/members/{memberId}/withdraw:
+    post:
+      x-api-id: API0003
+      operationId: withdrawMember
+      parameters:
+        - {name: memberId, in: path, required: true, schema: {type: string, maxLength: 10}}
+      responses:
+        "204": {description: 退会した}
+components:
+  schemas:
+    Member:
+      type: object
+      required: [memberId, name, status, createdAt]
+      properties:
+        memberId: {type: string, maxLength: 10}
+        name: {type: string, maxLength: 50}
+        email: {type: string, maxLength: 100}
+        status: {type: string, maxLength: 1}
+        createdAt: {type: string, format: date-time}

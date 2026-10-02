@@ -1,0 +1,14 @@
+# バッチ設計書（ジョブ単位）の新旧比較
+sheets:
+  - name: "概要"
+    items:
+      - {kind: label, name: ジョブ ID, label: ジョブ ID}
+      - {kind: label, name: ジョブ名, label: ジョブ名}
+      - {kind: label, name: 起動条件, label: 起動条件}
+      - {kind: block, name: 処理概要, label: 処理概要}
+  - name: "処理詳細"
+    items:
+      - {kind: table, name: 処理ステップ, header: STEP, key: [STEP]}
+  - name: "終了コード"
+    items:
+      - {kind: table, name: 終了コード, header: コード, key: [コード]}
