@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check . && ruff format --check .
+      - run: pytest -q
+      - name: samples can be regenerated and compared
+        run: |
+          python samples/make_samples.py -o "$RUNNER_TEMP/samples"
+          design-diff excel --type api --before samples/before/API0001_会員照会.xlsx --after samples/after/API0001_会員照会.xlsx
+          design-diff excel --all
+          design-diff spec --excel samples/spec/API定義書.xlsx --oas samples/spec/openapi.yaml -f json > /dev/null

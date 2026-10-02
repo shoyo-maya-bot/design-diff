@@ -1,0 +1,8 @@
+# ファイル連携（IF）設計書の新旧比較: レイアウト表を項番で対応付ける
+sheets:
+  - name: "IF*"
+    items:
+      - {kind: label, name: IF ID, label: IF ID}
+      - {kind: label, name: ファイル名, label: ファイル名}
+      - {kind: label, name: 文字コード, label: 文字コード}
+      - {kind: table, name: レイアウト, header: 項番, key: [項番]}

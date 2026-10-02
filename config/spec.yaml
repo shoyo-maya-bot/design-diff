@@ -1,0 +1,15 @@
+# API 定義書（Excel）と OpenAPI の整合チェック
+# OpenAPI 側は operation の x-api-id（無ければ operationId）を API ID として対応付ける
+sheets: "API*"
+api_id: {label: API ID}
+method: {label: メソッド}
+path: {label: パス}
+request:
+  title: 入力項目
+  columns: {name: 項目名, type: 型, required: 必須, max_length: 桁, location: 位置}
+response:
+  title: 出力項目
+  columns: {name: 項目名, type: 型, required: 必須, max_length: 桁}
+statuses: {title: 応答, column: ステータス}
+type_map: {文字列: string, 数値: integer, 小数: number, 真偽値: boolean, 日付: string, 日時: string, 配列: array, オブジェクト: object}
+required_marks: ["○", "◯", "必須", "Y"]
