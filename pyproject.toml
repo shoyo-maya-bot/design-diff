@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "design-diff"
 version = "0.1.0"
 description = "設計書レビュー用の差分レポート（Excel 設計書の新旧差分 / API 定義書と OpenAPI の整合）"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
