@@ -85,3 +85,8 @@ ruff check . && ruff format --check . && pytest
 ```
 
 構成: `cli`（引数）→ `application`（設定に従って読む・比べる・出力する）→ `domain`（比較のルール）/ `infrastructure`（Excel・OpenAPI の読み取り）
+
+## セキュリティ・ライセンス
+
+- 脆弱性を見つけたら、公開の Issue ではなく [SECURITY.md](SECURITY.md) の方法で知らせてください
+- ライセンスは [MIT](LICENSE) です
