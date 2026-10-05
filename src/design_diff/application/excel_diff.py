@@ -27,6 +27,9 @@ def validate_config(conf: dict[str, Any], where: str) -> None:
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に label がありません")
             if item["kind"] == "table" and not (item.get("header") and item.get("key")):
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に header と key が必要です")
+            hr = item.get("header_rows")
+            if hr is not None and (not isinstance(hr, int) or isinstance(hr, bool) or hr < 1):
+                raise ValueError(f"{where}: sheets[{i}].items[{j}].header_rows は 1 以上の整数です（省略で自動判定）")
         if s.get("pair_by"):
             try:
                 if re.compile(s["pair_by"]).groups < 1:
@@ -79,8 +82,9 @@ def _compare_sheet(sheet: str, items: list[dict], b_ws, a_ws) -> list[Change]:
                 sheet, item["name"], excel_reader.read_block(b_ws, item["label"], off), excel_reader.read_block(a_ws, item["label"], off)
             )
         else:
-            bt = excel_reader.read_table(b_ws, item["header"], item.get("title"))
-            at = excel_reader.read_table(a_ws, item["header"], item.get("title"))
+            hr = item.get("header_rows")
+            bt = excel_reader.read_table(b_ws, item["header"], item.get("title"), hr)
+            at = excel_reader.read_table(a_ws, item["header"], item.get("title"), hr)
             if bt is None or at is None:
                 out.append(Change("table_not_found", loc, "", "あり" if bt else "なし", "あり" if at else "なし"))
                 continue

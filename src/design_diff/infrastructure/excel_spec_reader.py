@@ -11,6 +11,8 @@
     statuses: {title: 応答, column: ステータス}
     type_map: {文字列: string, 数値: integer, 小数: number, 真偽値: boolean, 日付: string, 配列: array, オブジェクト: object}
     required_marks: ["○", "◯", "必須", "Y"]
+
+表の見出しが 2 段のときの列名は「親/子」（例: 型情報/型）. 段数は request などの header_rows で指定できる（省略で自動判定）.
 """
 
 from __future__ import annotations
@@ -59,7 +61,7 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
             if not pc:
                 continue
             cols = pc["columns"]
-            table = excel_reader.read_table(ws, cols["name"], pc.get("title"))
+            table = excel_reader.read_table(ws, cols["name"], pc.get("title"), pc.get("header_rows"))
             if table is None:
                 notes.append(f"{api_id}: {part} の表（{pc.get('title') or cols['name']}）が見つかりません")
                 continue
@@ -76,7 +78,7 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
                 }
         st = conf.get("statuses")
         if st:
-            table = excel_reader.read_table(ws, st["column"], st.get("title"))
+            table = excel_reader.read_table(ws, st["column"], st.get("title"), st.get("header_rows"))
             if table:
                 entry["statuses"] = sorted({r[st["column"]] for r in table[1] if r.get(st["column"])})
         if api_id in spec:

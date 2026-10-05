@@ -230,3 +230,89 @@ def test_spec_bad_openapi_is_usage_error(samples: Path):
     bad = samples / "bad.yaml"
     bad.write_text("openapi: 3.0.3\n", encoding="utf-8")
     assert run("spec", "--excel", str(samples / "spec/API定義書.xlsx"), "--oas", str(bad))[0] == 2
+
+
+# --- 2 段の見出し（結合セルのグループ見出し + 子見出し） ------------------------------------------
+
+
+def _two_row_header_book(path: Path, rows: list[list], *, merge_vertical: bool = True) -> Path:
+    """1 段目: 項目名（縦結合）・型情報（横結合）・備考（縦結合）、2 段目: 型・桁 の表."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "IF0001"
+    ws["A1"] = "項目名"
+    ws["B1"] = "型情報"
+    ws["D1"] = "備考"
+    ws["B2"] = "型"
+    ws["C2"] = "桁"
+    ws.merge_cells("B1:C1")
+    if merge_vertical:
+        ws.merge_cells("A1:A2")
+        ws.merge_cells("D1:D2")
+    for i, row in enumerate(rows, start=3):
+        for j, v in enumerate(row, start=1):
+            ws.cell(i, j, v)
+    wb.save(path)
+    return path
+
+
+ROWS = [["id", "数値", 10, ""], ["name", "文字列", 50, "氏名"]]
+
+
+@pytest.mark.parametrize("merge_vertical", [True, False])
+def test_two_row_header_is_combined(tmp_path: Path, merge_vertical: bool):
+    from design_diff.infrastructure import excel_reader
+
+    ws = excel_reader.open_book(_two_row_header_book(tmp_path / "a.xlsx", ROWS, merge_vertical=merge_vertical)).active
+    cols, rows = excel_reader.read_table(ws, "項目名")
+    assert cols == ["項目名", "型情報/型", "型情報/桁", "備考"]
+    assert rows == [
+        {"項目名": "id", "型情報/型": "数値", "型情報/桁": "10", "備考": ""},
+        {"項目名": "name", "型情報/型": "文字列", "型情報/桁": "50", "備考": "氏名"},
+    ]
+
+
+def test_two_row_header_diff_reports_the_sub_column(tmp_path: Path):
+    before = _two_row_header_book(tmp_path / "b.xlsx", ROWS)
+    after = _two_row_header_book(tmp_path / "a.xlsx", [["id", "数値", 10, ""], ["name", "文字列", 60, "氏名"]])
+    conf = {"sheets": [{"name": "IF*", "items": [{"kind": "table", "name": "レイアウト", "header": "項目名", "key": ["項目名"]}]}]}
+    changes = excel_diff.run(conf, before, after).changes
+    assert [(c.category, c.field, c.before, c.after) for c in changes] == [("cell_changed", "name の 型情報/桁", "50", "60")]
+
+
+def test_header_rows_option(tmp_path: Path):
+    """header_rows で段数を指定できる. 1 にすると従来どおり 1 段目だけを見出しにする."""
+    from design_diff.infrastructure import excel_reader
+
+    ws = excel_reader.open_book(_two_row_header_book(tmp_path / "a.xlsx", ROWS, merge_vertical=False)).active
+    cols, rows = excel_reader.read_table(ws, "項目名", header_rows=1)
+    assert cols == ["項目名", "型情報", "備考"]
+    cols, _ = excel_reader.read_table(ws, "項目名", header_rows=2)
+    assert cols == ["項目名", "型情報/型", "型情報/桁", "備考"]
+
+
+def test_single_row_header_with_merged_column_is_unchanged(tmp_path: Path):
+    """見出しが横結合でも、下の行が結合のままのデータなら 1 段の見出しとして読む."""
+    from openpyxl import Workbook
+
+    from design_diff.infrastructure import excel_reader
+
+    wb = Workbook()
+    ws = wb.active
+    ws.append(["No", "説明", None])
+    ws.append([1, "最初", None])
+    ws.append([2, "次", None])
+    for r in (1, 2, 3):
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=3)
+    wb.save(tmp_path / "s.xlsx")
+    cols, rows = excel_reader.read_table(excel_reader.open_book(tmp_path / "s.xlsx").active, "No")
+    assert cols == ["No", "説明"]
+    assert rows == [{"No": "1", "説明": "最初"}, {"No": "2", "説明": "次"}]
+
+
+def test_validate_header_rows():
+    item = {"kind": "table", "name": "x", "header": "No", "key": ["No"], "header_rows": 0}
+    with pytest.raises(ValueError, match="header_rows"):
+        excel_diff.validate_config({"sheets": [{"name": "*", "items": [item]}]}, "t.yaml")
