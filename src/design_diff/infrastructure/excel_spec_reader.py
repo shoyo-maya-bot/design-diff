@@ -36,8 +36,9 @@ def _int(v: str) -> int | None:
         return None
 
 
-def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    wb = excel_reader.open_book(path)
+def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str], list[str]]:
+    """ApiSpec・メモ・警告（数式の計算結果が無いなど）."""
+    wb, warnings = excel_reader.load_book(path)
     notes: list[str] = []
     spec: dict[str, dict[str, Any]] = {}
     type_map = conf.get("type_map", {})
@@ -84,4 +85,4 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
         if api_id in spec:
             notes.append(f"{api_id}: 複数のシートにあります（後のシート「{ws.title}」を使いました）")
         spec[api_id] = entry
-    return spec, notes
+    return spec, notes, warnings

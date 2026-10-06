@@ -1,4 +1,9 @@
-"""Excel から値・文章・表を取り出す（openpyxl。計算結果の値を読む）."""
+"""Excel から値・文章・表を取り出す（openpyxl。計算結果の値を読む）.
+
+数式セルは、Excel が保存した計算結果（キャッシュ）を読む. ツール（openpyxl など）で作った Excel は計算結果を
+持たないため、そのままでは数式セルが空になる. その場合は数式の文字列（例: =SUM(B4:B5)）を値として読み、
+警告を出す（Excel で開いて保存し直すと計算結果で比べられる）.
+"""
 
 from __future__ import annotations
 
@@ -12,9 +17,56 @@ from ..domain.model import text
 
 
 def open_book(path: Path) -> Any:
+    return load_book(path)[0]
+
+
+def load_book(path: Path) -> tuple[Any, list[str]]:
+    """計算結果の値で読んだブックと、警告（計算結果が保存されていない数式セルがあったとき）."""
     if not path.is_file():
         raise FileNotFoundError(f"Excel が見つかりません: {path}")
-    return load_workbook(path, data_only=True)
+    wb = load_workbook(path, data_only=True)
+    missing = _fill_missing_cached_values(path, wb)
+    if not missing:
+        return wb, []
+    examples = "、".join(missing[:3]) + (" など" if len(missing) > 3 else "")
+    return wb, [
+        f"{path.name}: 計算結果が保存されていない数式セルが {len(missing)} 個あります（{examples}）。"
+        "これらは計算結果ではなく数式の文字列（例: =SUM(B4:B5)）で比べました。ツールで作った Excel によくあります。"
+        "Excel で開いて保存し直すと、計算結果で比べられます"
+    ]
+
+
+def _formula_text(cell: Any) -> str | None:
+    if getattr(cell, "data_type", None) != "f" or cell.value is None:
+        return None
+    v = cell.value
+    if isinstance(v, str):
+        return v
+    text_attr = getattr(v, "text", None)  # 配列数式（ArrayFormula）
+    return text_attr if isinstance(text_attr, str) else str(v)
+
+
+def _fill_missing_cached_values(path: Path, wb: Any) -> list[str]:
+    """計算結果が無い数式セルに、数式の文字列を入れる. 入れたセルの位置（シート!セル）の一覧を返す."""
+    formulas = load_workbook(path, read_only=True)
+    missing: list[str] = []
+    try:
+        for fws in formulas.worksheets:
+            if not hasattr(fws, "iter_rows") or fws.title not in wb.sheetnames:
+                continue
+            ws = wb[fws.title]
+            for row in fws.iter_rows():
+                for c in row:
+                    f = _formula_text(c)
+                    if f is None:
+                        continue
+                    target = ws.cell(c.row, c.column)
+                    if target.value is None:
+                        target.value = f
+                        missing.append(f"{fws.title}!{target.coordinate}")
+    finally:
+        formulas.close()
+    return missing
 
 
 def _merged_value(ws: Worksheet, row: int, col: int) -> Any:

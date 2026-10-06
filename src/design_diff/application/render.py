@@ -35,9 +35,11 @@ def _cell(s: str) -> str:
 
 def markdown(result: DiffResult) -> str:
     lines = [f"# {result.title}", "", f"- 左: {result.left_label}", f"- 右: {result.right_label}", f"- 差分: {len(result.changes)} 件", ""]
+    for w in result.warnings:
+        lines.append(f"> **注意**: {w}")
     for n in result.notes:
         lines.append(f"> {n}")
-    if result.notes:
+    if result.notes or result.warnings:
         lines.append("")
     if not result.changes:
         return "\n".join(lines + ["差分はありません。", ""])
@@ -51,18 +53,22 @@ def markdown(result: DiffResult) -> str:
 
 
 def to_findings(result: DiffResult) -> list[Finding]:
-    return [
-        Finding(
-            c.category,
-            Severity.ERROR if c.category in CONFIG_PROBLEMS else Severity.WARNING,
-            LABELS.get(c.category, c.category),
-            location=c.location,
-            field=c.field,
-            expected=c.before,
-            actual=c.after,
-        )
-        for c in result.changes
-    ] + [Finding("note", Severity.INFO, n) for n in result.notes]
+    return (
+        [
+            Finding(
+                c.category,
+                Severity.ERROR if c.category in CONFIG_PROBLEMS else Severity.WARNING,
+                LABELS.get(c.category, c.category),
+                location=c.location,
+                field=c.field,
+                expected=c.before,
+                actual=c.after,
+            )
+            for c in result.changes
+        ]
+        + [Finding("formula_cache_missing", Severity.WARNING, w) for w in result.warnings]
+        + [Finding("note", Severity.INFO, n) for n in result.notes]
+    )
 
 
 def render(result: DiffResult, fmt: str, tool: str, version: str) -> str:

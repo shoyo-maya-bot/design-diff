@@ -5,6 +5,8 @@
                  "request": {"項目名": {"type": "string", "required": True, "max_length": 50, "location": "body"}},
                  "response": {...同じ形...},
                  "statuses": ["200", "404"]}}
+
+    OpenAPI の oneOf / anyOf の候補の項目には "variant"（例: "oneOf 候補2"）が付く. required が None の項目は必須を比べない.
 """
 
 from __future__ import annotations
@@ -61,7 +63,7 @@ def _fields(location: str, d: dict[str, dict[str, Any]], o: dict[str, dict[str, 
             out.append(Change("field_missing_in_oas", location, name))
     for name in o:
         if name not in d:
-            out.append(Change("field_missing_in_doc", location, name))
+            out.append(Change("field_missing_in_doc", location, name, "", str(o[name].get("variant") or "")))
     for name in [n for n in d if n in o]:
         df, of = d[name], o[name]
         for key, cat in (("type", "type_mismatch"), ("location", "location_mismatch")):

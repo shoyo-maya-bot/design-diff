@@ -39,8 +39,9 @@ def validate_config(conf: dict[str, Any], where: str) -> None:
 
 
 def run(conf: dict[str, Any], before: Path, after: Path) -> DiffResult:
-    b_book, a_book = excel_reader.open_book(before), excel_reader.open_book(after)
+    (b_book, b_warn), (a_book, a_warn) = excel_reader.load_book(before), excel_reader.load_book(after)
     result = DiffResult(f"Excel 差分: {after.name}", f"変更前 {before.name}", f"変更後 {after.name}")
+    result.warnings = b_warn + a_warn
     for sheet_conf in conf["sheets"]:
         pattern = sheet_conf.get("name", "*")
         b_keys = _keyed([n for n in b_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"))
