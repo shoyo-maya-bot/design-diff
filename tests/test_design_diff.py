@@ -316,3 +316,38 @@ def test_validate_header_rows():
     item = {"kind": "table", "name": "x", "header": "No", "key": ["No"], "header_rows": 0}
     with pytest.raises(ValueError, match="header_rows"):
         excel_diff.validate_config({"sheets": [{"name": "*", "items": [item]}]}, "t.yaml")
+
+
+# --- 表示形式どおりの値で比べる ---------------------------------------------------------------------
+
+
+def _code_book(path: Path, code: object, fmt: str = "General", amount: object = 1500, amount_fmt: str = "#,##0") -> Path:
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "IF0001"
+    ws.append(["コード", "金額"])
+    ws.append([code, amount])
+    ws["A2"].number_format = fmt
+    ws["B2"].number_format = amount_fmt
+    wb.save(path)
+    return path
+
+
+CODE_CONF = {"sheets": [{"name": "IF*", "items": [{"kind": "table", "name": "コード表", "header": "コード", "key": ["金額"]}]}]}
+
+
+def test_text_and_zero_padded_number_are_equal(tmp_path: Path):
+    """文字列の「001」と、表示形式 000 の数値 1 は Excel の画面で同じに見えるので差分にしない."""
+    before = _code_book(tmp_path / "b.xlsx", "001", "@")
+    after = _code_book(tmp_path / "a.xlsx", 1, "000", amount="1,500", amount_fmt="@")
+    assert excel_diff.run(CODE_CONF, before, after).changes == []
+
+
+def test_display_format_change_is_reported(tmp_path: Path):
+    """値が同じでも、表示が変わる表示形式の変更（000 → 0）は差分として出す. 値は表示どおりの文字列."""
+    before = _code_book(tmp_path / "b.xlsx", 1, "000")
+    after = _code_book(tmp_path / "a.xlsx", 1, "0")
+    changes = excel_diff.run(CODE_CONF, before, after).changes
+    assert [(c.category, c.field, c.before, c.after) for c in changes] == [("cell_changed", "1,500 の コード", "001", "1")]

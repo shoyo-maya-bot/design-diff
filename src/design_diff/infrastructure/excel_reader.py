@@ -1,5 +1,9 @@
 """Excel から値・文章・表を取り出す（openpyxl。計算結果の値を読む）.
 
+セルの値は表示形式どおりの文字列で比べる（devtools_common.excel.render_value）. 例えば表示形式 `000` の数値 1 は
+「001」、`#,##0` の 1500 は「1,500」、日付は `yyyy/mm/dd` なら「2026/04/05」. 文字列で入力した「001」と、
+表示形式でゼロ埋めした数値 1 は同じ値とみなす（Excel の画面で同じに見えるため）.
+
 数式セルは、Excel が保存した計算結果（キャッシュ）を読む. ツール（openpyxl など）で作った Excel は計算結果を
 持たないため、そのままでは数式セルが空になる. その場合は数式の文字列（例: =SUM(B4:B5)）を値として読み、
 警告を出す（Excel で開いて保存し直すと計算結果で比べられる）.
@@ -7,13 +11,16 @@
 
 from __future__ import annotations
 
+import weakref
 from pathlib import Path
 from typing import Any
 
-from openpyxl import load_workbook
+from devtools_common.excel import MergeMap, header_depth, header_names, load_workbook_with_formula_fallback, render_cell
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..domain.model import text
+
+MAX_HEADER_ROWS = 3
 
 
 def open_book(path: Path) -> Any:
@@ -22,10 +29,7 @@ def open_book(path: Path) -> Any:
 
 def load_book(path: Path) -> tuple[Any, list[str]]:
     """計算結果の値で読んだブックと、警告（計算結果が保存されていない数式セルがあったとき）."""
-    if not path.is_file():
-        raise FileNotFoundError(f"Excel が見つかりません: {path}")
-    wb = load_workbook(path, data_only=True)
-    missing = _fill_missing_cached_values(path, wb)
+    wb, missing = load_workbook_with_formula_fallback(path)
     if not missing:
         return wb, []
     examples = "、".join(missing[:3]) + (" など" if len(missing) > 3 else "")
@@ -36,47 +40,24 @@ def load_book(path: Path) -> tuple[Any, list[str]]:
     ]
 
 
-def _formula_text(cell: Any) -> str | None:
-    if getattr(cell, "data_type", None) != "f" or cell.value is None:
-        return None
-    v = cell.value
-    if isinstance(v, str):
-        return v
-    text_attr = getattr(v, "text", None)  # 配列数式（ArrayFormula）
-    return text_attr if isinstance(text_attr, str) else str(v)
+_MERGES: weakref.WeakKeyDictionary[Any, MergeMap] = weakref.WeakKeyDictionary()
 
 
-def _fill_missing_cached_values(path: Path, wb: Any) -> list[str]:
-    """計算結果が無い数式セルに、数式の文字列を入れる. 入れたセルの位置（シート!セル）の一覧を返す."""
-    formulas = load_workbook(path, read_only=True)
-    missing: list[str] = []
-    try:
-        for fws in formulas.worksheets:
-            if not hasattr(fws, "iter_rows") or fws.title not in wb.sheetnames:
-                continue
-            ws = wb[fws.title]
-            for row in fws.iter_rows():
-                for c in row:
-                    f = _formula_text(c)
-                    if f is None:
-                        continue
-                    target = ws.cell(c.row, c.column)
-                    if target.value is None:
-                        target.value = f
-                        missing.append(f"{fws.title}!{target.coordinate}")
-    finally:
-        formulas.close()
-    return missing
+def _merges(ws: Worksheet) -> MergeMap:
+    m = _MERGES.get(ws)
+    if m is None:
+        m = _MERGES[ws] = MergeMap.from_worksheet(ws)
+    return m
 
 
-def _merged_value(ws: Worksheet, row: int, col: int) -> Any:
-    v = ws.cell(row, col).value
-    if v is not None:
-        return v
-    for rng in ws.merged_cells.ranges:
-        if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col:
-            return ws.cell(rng.min_row, rng.min_col).value
-    return None
+def cell_text(ws: Worksheet, row: int, col: int) -> str:
+    """セルの値を表示形式どおりの文字列で（前後の空白は除く）. 結合で埋めない."""
+    return text(render_cell(ws.cell(row, col))[0])
+
+
+def _merged_value(ws: Worksheet, row: int, col: int) -> str:
+    """結合の左上の値で埋めたセルの値（表示形式どおりの文字列）."""
+    return cell_text(ws, *_merges(ws).anchor(row, col))
 
 
 def _norm_label(v: Any) -> str:
@@ -97,7 +78,7 @@ def read_label(ws: Worksheet, label: str, offset: tuple[int, int] = (0, 1)) -> s
     pos = find_label(ws, label)
     if pos is None:
         return None
-    return text(_merged_value(ws, pos[0] + offset[0], pos[1] + offset[1]))
+    return _merged_value(ws, pos[0] + offset[0], pos[1] + offset[1])
 
 
 def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0)) -> str | None:
@@ -108,7 +89,7 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0)) -> s
     r, c = pos[0] + offset[0], pos[1] + offset[1]
     lines = []
     while r <= ws.max_row:
-        v = text(_merged_value(ws, r, c))
+        v = _merged_value(ws, r, c)
         if not v:
             break
         lines.append(v)
@@ -118,44 +99,26 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0)) -> s
 
 def _own_value(ws: Worksheet, row: int, col: int) -> str:
     """結合の左上以外は空として読む（結合で埋めない）セルの値."""
-    for rng in ws.merged_cells.ranges:
-        if rng.min_row <= row <= rng.max_row and rng.min_col <= col <= rng.max_col and (row, col) != (rng.min_row, rng.min_col):
-            return ""
-    return _norm_label(ws.cell(row, col).value)
-
-
-MAX_HEADER_ROWS = 3
+    return "" if _merges(ws).is_covered(row, col) else _norm_label(cell_text(ws, row, col))
 
 
 def _count_header_rows(ws: Worksheet, head_row: int) -> int:
-    """見出しが何段か（結合セルから判断する）.
+    """見出しが何段か（結合セルから判断する. devtools_common.excel.header_depth）.
 
     次の行も見出しとみなすのは、次のどちらかのとき:
-    - 見出し行から始まる結合セルが、次の行まで縦に続いている（例: 2 段の見出しで縦に結合した「項目名」）
-    - 見出し行で横に結合したセル（例: 「型情報」）の下の各列に、それぞれ別の値がある（例: 「型」「桁」）
-    データ行も同じように横に結合しているだけの表は 1 段のままです.
+    - 見出し行から始まる結合セルが次の行まで縦に続いていて、次の行が文字だけ（例: 縦に結合した「項目名」の横に「型」「桁」）
+    - 見出し行で横に結合したセル（例: 「型情報」）の下の各列に、どれも文字の値がある（例: 「型」「桁」）
+    データ行も同じように横に結合しているだけの表や、結合の下が数値の表は 1 段のままです.
     """
-    n = 1
-    while n < MAX_HEADER_ROWS:
-        last, nxt = head_row + n - 1, head_row + n
-        if nxt > ws.max_row:
-            break
-        sub = False
-        for rng in ws.merged_cells.ranges:
-            if not head_row <= rng.min_row <= last:
-                continue
-            if rng.max_row >= nxt:
-                sub = True
-                break
-            if rng.max_row == last and rng.max_col > rng.min_col:
-                below = [_own_value(ws, nxt, c) for c in range(rng.min_col, rng.max_col + 1)]
-                if all(below) and len(set(below)) == len(below):
-                    sub = True
-                    break
-        if not sub:
-            break
-        n += 1
-    return n
+    return header_depth(
+        _merges(ws),
+        lambda r, c: _own_value(ws, r, c),
+        head_row,
+        first_col=1,
+        last_col=ws.max_column,
+        last_row=ws.max_row,
+        max_rows=MAX_HEADER_ROWS,
+    )
 
 
 def read_table(
@@ -178,14 +141,9 @@ def read_table(
             return None
         head_row = pos[0]
     depth = header_rows or _count_header_rows(ws, head_row)
+    names = header_names(lambda r, c: _norm_label(_merged_value(ws, r, c)), head_row, depth, range(1, ws.max_column + 1))
     cols: list[tuple[int, str]] = []
-    for c in range(1, ws.max_column + 1):
-        parts: list[str] = []
-        for r in range(head_row, head_row + depth):
-            v = _norm_label(_merged_value(ws, r, c))
-            if v and (not parts or parts[-1] != v):
-                parts.append(v)
-        name = "/".join(parts)
+    for c, name in zip(range(1, ws.max_column + 1), names, strict=True):
         if name and name not in [n for _, n in cols]:
             cols.append((c, name))
     if not cols:
@@ -193,7 +151,7 @@ def read_table(
     rows: list[dict[str, str]] = []
     r = head_row + depth
     while r <= ws.max_row:
-        values = {name: text(_merged_value(ws, r, c)) for c, name in cols}
+        values = {name: _merged_value(ws, r, c) for c, name in cols}
         if not any(values.values()):
             break
         rows.append(values)
