@@ -32,6 +32,8 @@ class DiffResult:
     changes: list[Change] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)  # 結果の読み方に注意が要ること（例: 数式の計算結果が無い）
+    # 読み方の警告（rule_id, 文）. 例: duplicate_column（同じ列名が 2 列）、table_truncated（表の続きを読んでいない）
+    alerts: list[tuple[str, str]] = field(default_factory=list)
 
     def by_category(self) -> dict[str, list[Change]]:
         out: dict[str, list[Change]] = {}

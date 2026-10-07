@@ -43,6 +43,9 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
     spec: dict[str, dict[str, Any]] = {}
     type_map = conf.get("type_map", {})
     marks = set(conf.get("required_marks", ["○", "◯", "必須", "Y"]))
+    # 表の終わりの目印（設定にある別のラベル・表題）. 表は空行を挟んで続き、次の節の始まりで終わる
+    stops = {conf[k]["label"] for k in ("api_id", "method", "path") if isinstance(conf.get(k), dict) and conf[k].get("label")}
+    stops |= {conf[k]["title"] for k in ("request", "response", "statuses") if isinstance(conf.get(k), dict) and conf[k].get("title")}
     for ws in wb.worksheets:
         if not fnmatch(ws.title, conf.get("sheets", "*")):
             continue
@@ -62,7 +65,10 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
             if not pc:
                 continue
             cols = pc["columns"]
-            table = excel_reader.read_table(ws, cols["name"], pc.get("title"), pc.get("header_rows"))
+            ctx = excel_reader.ReadContext(stop_labels={excel_reader.norm_label(x) for x in stops})
+            table = excel_reader.read_table(ws, cols["name"], pc.get("title"), pc.get("header_rows"), ctx)
+            notes += [n for n in ctx.notes if n not in notes]
+            warnings += [w for _, w in ctx.alerts if w not in warnings]
             if table is None:
                 notes.append(f"{api_id}: {part} の表（{pc.get('title') or cols['name']}）が見つかりません")
                 continue
@@ -79,7 +85,10 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
                 }
         st = conf.get("statuses")
         if st:
-            table = excel_reader.read_table(ws, st["column"], st.get("title"), st.get("header_rows"))
+            ctx = excel_reader.ReadContext(stop_labels={excel_reader.norm_label(x) for x in stops})
+            table = excel_reader.read_table(ws, st["column"], st.get("title"), st.get("header_rows"), ctx)
+            notes += [n for n in ctx.notes if n not in notes]
+            warnings += [w for _, w in ctx.alerts if w not in warnings]
             if table:
                 entry["statuses"] = sorted({r[st["column"]] for r in table[1] if r.get(st["column"])})
         if api_id in spec:
