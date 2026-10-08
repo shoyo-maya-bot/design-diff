@@ -33,7 +33,7 @@ ALERT_LABELS = {
     "duplicate_pair_key": "pair_by のキーが重複したシート",
     "sheet_too_large": "シートの値が多すぎて一部だけ読んだ",
     "blank_key": "キー列が空の行（比べていない）",
-    "duplicate_api_id": "同じ API ID のシート（最初のシートだけ比べた）",
+    "duplicate_api_id": "同じ API ID のシート・操作（最初のものだけ比べた）",
     "not_a_number": "数値として読めない値（比べていない）",
 }
 LABELS = {**EXCEL_CATEGORIES, **SPEC_CATEGORIES}
