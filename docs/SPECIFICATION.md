@@ -111,7 +111,7 @@ API ID → method, path, request{項目名: type, required, max_length, location
 | `field_missing_in_oas` / `field_missing_in_doc` | 片方にしか無い項目 |
 | `type_mismatch` | 型の不一致（設計書の型は `type_map` で変換） |
 | `required_mismatch` | 必須の不一致（`required_marks` のどれかなら必須） |
-| `length_mismatch` | 桁の不一致（設計書に桁があるときだけ） |
+| `length_mismatch` | 桁の不一致（設計書に桁があるときだけ。桁は表示形式に関係なくセルの値で読み、文字列の `1,000` や全角も数値として読む。数値として読めない桁は比べず、警告 `not_a_number`） |
 | `location_mismatch` | 受け渡し位置の不一致（設計書に位置があるときだけ） |
 | `status_missing_in_oas` / `status_missing_in_doc` | 片方にしか無い応答ステータス（設計書に応答の表があるときだけ） |
 

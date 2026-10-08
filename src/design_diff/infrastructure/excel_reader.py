@@ -101,6 +101,7 @@ class ReadContext:
     alerts: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     table_rows: list[int] = field(default_factory=list)  # 直前の read_table で読んだ行の、シートの行番号（行と同じ順）
+    table_cols: dict[str, int] = field(default_factory=dict)  # 直前の read_table の列名 → シートの列番号
 
     def cover(self, ws: Worksheet, row: int, col: int) -> None:
         m = _merges(ws).get(row, col)
@@ -271,6 +272,12 @@ def cell_text(ws: Worksheet, row: int, col: int) -> str:
     """セルの値を表示形式どおりの文字列で（前後の空白は除く）. 結合で埋めない. 値の無いセルは作らずに空."""
     cell = _sheet(ws).cells.get((row, col))
     return "" if cell is None else text(render_cell(cell)[0])
+
+
+def raw_value(ws: Worksheet, row: int, col: int) -> Any:
+    """結合の左上で埋めたセルの値そのもの（表示形式を当てない. 数値は数値のまま）. 値が無ければ None."""
+    cell = _sheet(ws).cells.get(_merges(ws).anchor(row, col))
+    return None if cell is None else cell.value
 
 
 def _merged_value(ws: Worksheet, row: int, col: int) -> str:
@@ -463,6 +470,7 @@ def read_table(
     header_set = {n for _, n in cols}
     rows: list[dict[str, str]] = []
     ctx.table_rows = []
+    ctx.table_cols = {n: c for c, n in cols}
     r = head_row + depth
     last = head_row + depth - 1
     blank = 0
