@@ -6,6 +6,8 @@
 
 ### Added
 
+- AGENTS.md（AI エージェント向け: 使い方、変更の約束、push 前の確認、チェックを甘くしない約束）
+- CI でカバレッジを測り、下限（`pyproject.toml` の `fail_under = 90`）を下回ると失敗する（pytest-cov）
 - 警告 `blank_key`: 表のキー列が空の行（対応付けられず比べていない行）の件数と行番号
 - 警告 `duplicate_api_id`: `spec` で同じ API ID のシートが 2 枚以上
 - `python -m design_diff`（`design-diff` コマンドと同じ）
@@ -54,3 +56,4 @@
 - **終了コード**: 壊れた・形式の違う Excel（開けないファイル）を読んだときの終了コードを `3`（内部エラー）から `2`（入力の誤り）にした。
   メッセージは「Excel を開けません（…）: <パス>」。`--all` では従来どおり `pair_failed` として続け、終了コード 1
 - devtools-common の固定を `2e25f8a` に更新
+- devtools-common の固定を `cbe97d5` に更新（全ツールでそろえる固定先）

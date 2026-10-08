@@ -161,3 +161,30 @@ def test_zip_limits_entries_and_total(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.setattr(excel_reader, "MAX_UNZIPPED", 100)
     with pytest.raises(excel_reader.UnreadableBookError, match="展開後の大きさ"):
         excel_reader.check_zip_limits(path)
+
+
+# --- 4. CI でカバレッジを測り、下限を設ける ------------------------------------------------------------
+
+
+def test_ci_measures_coverage_with_floor():
+    import sys
+
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:  # pragma: no cover
+        import tomli as tomllib
+    conf = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert any(d.startswith("pytest-cov") for d in conf["project"]["optional-dependencies"]["dev"])
+    assert conf["tool"]["coverage"]["report"]["fail_under"] >= 90
+    ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+    assert "pytest -q --cov" in ci
+
+
+# --- 6. AGENTS.md ---------------------------------------------------------------------------------
+
+
+def test_agents_md_has_push_check_and_no_weakening_promise():
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    assert "push" in text and "pytest -q --cov" in text
+    assert "チェックを甘くしない" in text
+    assert "AGENTS.md" in (ROOT / "README.md").read_text(encoding="utf-8")
