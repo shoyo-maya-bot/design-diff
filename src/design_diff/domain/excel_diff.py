@@ -4,9 +4,13 @@
 - label: ラベルのセルからの相対位置の値（例: 「ジョブ ID」の右隣）
 - block: ラベルの下に続く複数行を連結した文章（例: 「処理概要」の下の段落）
 - table: 見出し行のある表。キー列で行を対応付け、追加・削除・変更された行とセルを出す
+  （キーが重複した行は、同じキーの中で出現順に対応付ける）
+- 設定に無いセル: 行の並びを対応付けて（行の挿入・削除でずれても）値の違うセルを出す
 """
 
 from __future__ import annotations
+
+from difflib import SequenceMatcher
 
 from .model import Change, text
 
@@ -40,14 +44,20 @@ def compare_table(location: str, key: list[str], before: Table, after: Table) ->
         changes.append(Change("key_column_missing", location, "・".join(missing_key)))
         return changes
 
+    reported: set[str] = set()
+
     def index(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+        """キー → 行. 同じキーの 2 行目からは「キー（2 件目）」として別の行にする（後の行で上書きしない）."""
         out: dict[str, dict[str, str]] = {}
+        count: dict[str, int] = {}
         for r in rows:
             k = " / ".join(text(r.get(c)) for c in key)
             if k.replace(" / ", ""):
-                if k in out:
+                count[k] = count.get(k, 0) + 1
+                if count[k] == 2 and k not in reported:
+                    reported.add(k)
                     changes.append(Change("duplicate_key", location, k))
-                out[k] = r
+                out[k if count[k] == 1 else f"{k}（{count[k]} 件目）"] = r
         return out
 
     b_idx, a_idx = index(b_rows), index(a_rows)
@@ -64,6 +74,47 @@ def compare_table(location: str, key: list[str], before: Table, after: Table) ->
             if bv != av:
                 changes.append(Change("cell_changed", location, f"{k} の {c}", bv, av))
     return changes
+
+
+def column_letter(col: int) -> str:
+    """列番号（1 始まり）→ Excel の列名（1 → A、27 → AA）."""
+    s = ""
+    while col > 0:
+        col, rem = divmod(col - 1, 26)
+        s = chr(ord("A") + rem) + s
+    return s
+
+
+OutsideRow = tuple[int, dict[int, str]]  # (行番号, 列番号 → 値)
+
+
+def compare_outside(before: list[OutsideRow], after: list[OutsideRow]) -> list[tuple[str, str, str]]:
+    """設定に無いセルどうしを比べ、違うセルの (セル番地, 変更前, 変更後) を返す.
+
+    行の並びを内容で対応付ける（difflib）ので、表の行が増えて下の欄がずれただけなら差分にしない.
+    セル番地は変更後の位置（削除された行は変更前の位置）.
+    """
+
+    def key(row: OutsideRow) -> tuple[tuple[int, str], ...]:
+        return tuple(sorted(row[1].items()))
+
+    out: list[tuple[str, str, str]] = []
+
+    def cells(b: OutsideRow | None, a: OutsideRow | None) -> None:
+        bv, av = (b[1] if b else {}), (a[1] if a else {})
+        row = a[0] if a else b[0]  # type: ignore[index]
+        for c in sorted(set(bv) | set(av)):
+            if bv.get(c, "") != av.get(c, ""):
+                out.append((f"{column_letter(c)}{row}", bv.get(c, ""), av.get(c, "")))
+
+    sm = SequenceMatcher(a=[key(r) for r in before], b=[key(r) for r in after], autojunk=False)
+    for op, i1, i2, j1, j2 in sm.get_opcodes():
+        if op == "equal":
+            continue
+        bs, as_ = before[i1:i2], after[j1:j2]
+        for i in range(max(len(bs), len(as_))):
+            cells(bs[i] if i < len(bs) else None, as_[i] if i < len(as_) else None)
+    return out
 
 
 def _summary(row: dict[str, str], cols: list[str]) -> str:

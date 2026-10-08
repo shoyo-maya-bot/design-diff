@@ -24,6 +24,12 @@ EXCEL_CATEGORIES = {
     "row_added": "追加された行",
     "row_removed": "削除された行",
     "cell_changed": "セルの変更",
+    "outside_changed": "比較対象外のセルの変更（設定に無いセル）",
+    "outside_cell_changed": "比較対象外のセルの変更（設定に無いセル）",
+}
+ALERT_LABELS = {
+    "duplicate_column": "同じ名前の列",
+    "table_truncated": "表の続きを比べていない",
 }
 LABELS = {**EXCEL_CATEGORIES, **SPEC_CATEGORIES}
 CONFIG_PROBLEMS = {"label_not_found", "table_not_found", "key_column_missing", "duplicate_key"}
@@ -37,9 +43,11 @@ def markdown(result: DiffResult) -> str:
     lines = [f"# {result.title}", "", f"- 左: {result.left_label}", f"- 右: {result.right_label}", f"- 差分: {len(result.changes)} 件", ""]
     for w in result.warnings:
         lines.append(f"> **注意**: {w}")
+    for _, w in result.alerts:
+        lines.append(f"> **注意**: {w}")
     for n in result.notes:
         lines.append(f"> {n}")
-    if result.notes or result.warnings:
+    if result.notes or result.warnings or result.alerts:
         lines.append("")
     if not result.changes:
         return "\n".join(lines + ["差分はありません。", ""])
@@ -67,6 +75,7 @@ def to_findings(result: DiffResult) -> list[Finding]:
             for c in result.changes
         ]
         + [Finding("formula_cache_missing", Severity.WARNING, w) for w in result.warnings]
+        + [Finding(rule, Severity.WARNING, w) for rule, w in result.alerts]
         + [Finding("note", Severity.INFO, n) for n in result.notes]
     )
 
