@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import math
+import unicodedata
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -29,11 +31,33 @@ def _offset(conf: dict) -> tuple[int, int]:
     return int(o[0]), int(o[1])
 
 
-def _int(v: str) -> int | None:
-    try:
-        return int(float(v))
-    except (TypeError, ValueError):
+def _int(v: Any) -> int | None:
+    """桁などの数値. セルの値が数値ならそのまま（表示形式に関係なく）、文字列なら「1,000」「５０」も数値として読む.
+
+    読めなければ None（空も None）.
+    """
+    if isinstance(v, bool):
         return None
+    if isinstance(v, (int, float)):
+        return int(v) if math.isfinite(v) else None
+    s = unicodedata.normalize("NFKC", str(v or "")).strip().replace(",", "")
+    try:
+        f = float(s)
+    except ValueError:
+        return None
+    return int(f) if math.isfinite(f) else None
+
+
+def _number_cell(ws: Any, ctx: excel_reader.ReadContext, i: int, column: str, shown: str) -> tuple[int | None, bool]:
+    """表の i 行目の列 column の数値 → (値, 読めたか). 値はセルの値（表示形式を当てる前）で読む. 空は (None, True)."""
+    if not shown:
+        return None, True
+    col = ctx.table_cols.get(column)
+    raw = excel_reader.raw_value(ws, ctx.table_rows[i], col) if col is not None and i < len(ctx.table_rows) else shown
+    n = _int(raw)
+    if n is None and not isinstance(raw, (int, float)):
+        n = _int(shown)
+    return n, n is not None
 
 
 def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str], list[str]]:
@@ -87,15 +111,25 @@ def read_with_alerts(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[s
             if table is None:
                 notes.append(f"{api_id}: {part} の表（{pc.get('title') or cols['name']}）が見つかりません")
                 continue
-            for row in table[1]:
+            for i, row in enumerate(table[1]):
                 name = row.get(cols["name"], "")
                 if not name:
                     continue
                 raw_type = row.get(cols.get("type", ""), "")
+                shown = row.get(cols.get("max_length", ""), "")
+                max_length, ok = _number_cell(ws, ctx, i, cols.get("max_length", ""), shown)
+                if not ok:
+                    alerts.append(
+                        (
+                            "not_a_number",
+                            f"{ws.title}: {api_id} の {part} の項目「{name}」の{cols['max_length']}「{shown}」を数値として読めないため、"
+                            "桁は比べていません",
+                        )
+                    )
                 entry[part][name] = {
                     "type": type_map.get(raw_type, raw_type or None),
                     "required": (row.get(cols.get("required", ""), "") in marks) if cols.get("required") else None,
-                    "max_length": _int(row.get(cols.get("max_length", ""), "")),
+                    "max_length": max_length,
                     "location": row.get(cols.get("location", ""), "") or ("body" if part == "request" else None),
                 }
         st = conf.get("statuses")

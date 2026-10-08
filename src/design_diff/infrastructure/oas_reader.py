@@ -227,6 +227,37 @@ def _brief(e: yaml.YAMLError) -> str:
     return f"{mark.line + 1} 行 {mark.column + 1} 列: {problem}" if mark is not None else str(problem)
 
 
+def _media_type(key: Any) -> str:
+    """メディアタイプの本体（パラメーター「; charset=…」を除き、小文字）."""
+    return str(key).split(";", 1)[0].strip().lower()
+
+
+def is_json_media_type(key: Any) -> bool:
+    """JSON のメディアタイプか. application/json、*+json（application/problem+json など）、パラメーター付きも含む."""
+    mt = _media_type(key)
+    return mt == "application/json" or (mt.startswith("application/") and mt.endswith("+json"))
+
+
+def json_schema(content: Any) -> Any:
+    """content（メディアタイプ → Media Type Object）から比べるスキーマを選ぶ.
+
+    1. application/json（パラメーター付きも）2. *+json 3. */* の順. JSON が無く */* も無ければ None.
+    """
+    if not isinstance(content, dict):
+        return None
+    keys = list(content)
+    ranked = (
+        [k for k in keys if _media_type(k) == "application/json"]
+        + [k for k in keys if is_json_media_type(k) and _media_type(k) != "application/json"]
+        + [k for k in keys if _media_type(k) == "*/*"]
+    )
+    for k in ranked:
+        media = content.get(k) or {}
+        if isinstance(media, dict) and media.get("schema") is not None:
+            return media.get("schema")
+    return None
+
+
 def _read(doc: dict) -> tuple[dict[str, dict[str, Any]], list[str]]:
     spec: dict[str, dict[str, Any]] = {}
     notes: list[str] = []
@@ -248,12 +279,12 @@ def _read(doc: dict) -> tuple[dict[str, dict[str, Any]], list[str]]:
                     "location": prm.get("in", "query"),
                 }
             body = _resolve(doc, op.get("requestBody") or {})
-            json_schema = ((body.get("content") or {}).get("application/json") or {}).get("schema")
-            if json_schema:
-                request.update(_props(doc, json_schema, "body", f"{api_id} request", notes))
+            req_schema = json_schema(body.get("content"))
+            if req_schema:
+                request.update(_props(doc, req_schema, "body", f"{api_id} request", notes))
             responses = op.get("responses") or {}
             ok = next((_resolve(doc, r) for code, r in responses.items() if str(code).startswith("2")), {})
-            res_schema = ((ok.get("content") or {}).get("application/json") or {}).get("schema")
+            res_schema = json_schema(ok.get("content"))
             spec[str(api_id)] = {
                 "method": m.upper(),
                 "path": p,

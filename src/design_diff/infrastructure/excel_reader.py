@@ -101,6 +101,7 @@ class ReadContext:
     alerts: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     table_rows: list[int] = field(default_factory=list)  # 直前の read_table で読んだ行の、シートの行番号（行と同じ順）
+    table_cols: dict[str, int] = field(default_factory=dict)  # 直前の read_table の列名 → シートの列番号
 
     def cover(self, ws: Worksheet, row: int, col: int) -> None:
         m = _merges(ws).get(row, col)
@@ -109,9 +110,11 @@ class ReadContext:
         else:
             self.covered.add((row, col))
 
-    def cover_rows(self, ws: Worksheet, first: int, last: int) -> None:
+    def cover_rows(self, ws: Worksheet, first: int, last: int, first_col: int = 1, last_col: int | None = None) -> None:
+        """行 first〜last の、列 first_col〜last_col（省略で値のある右端まで）のセルを読んだことにする."""
+        end = _sheet(ws).max_col if last_col is None else last_col
         for r in range(first, last + 1):
-            for c in range(1, _sheet(ws).max_col + 1):
+            for c in range(first_col, end + 1):
                 self.cover(ws, r, c)
 
 
@@ -271,6 +274,12 @@ def cell_text(ws: Worksheet, row: int, col: int) -> str:
     """セルの値を表示形式どおりの文字列で（前後の空白は除く）. 結合で埋めない. 値の無いセルは作らずに空."""
     cell = _sheet(ws).cells.get((row, col))
     return "" if cell is None else text(render_cell(cell)[0])
+
+
+def raw_value(ws: Worksheet, row: int, col: int) -> Any:
+    """結合の左上で埋めたセルの値そのもの（表示形式を当てない. 数値は数値のまま）. 値が無ければ None."""
+    cell = _sheet(ws).cells.get(_merges(ws).anchor(row, col))
+    return None if cell is None else cell.value
 
 
 def _merged_value(ws: Worksheet, row: int, col: int) -> str:
@@ -463,6 +472,7 @@ def read_table(
     header_set = {n for _, n in cols}
     rows: list[dict[str, str]] = []
     ctx.table_rows = []
+    ctx.table_cols = {n: c for c, n in cols}
     r = head_row + depth
     last = head_row + depth - 1
     blank = 0
@@ -488,10 +498,21 @@ def read_table(
         ctx.table_rows.append(r)
         last = r
         r += 1
-    ctx.cover_rows(ws, head_row, last)
+    # 表の列の範囲（見出しのある左端〜右端. 横に結合した見出しの右端まで）だけを読んだことにする.
+    # 同じ行でも範囲の外のセル（表の右の承認欄・メモなど）は「設定に無いセル」として比べる
+    named = [c for c, name in zip(width, names, strict=True) if name]
+    lo = min(named)
+    hi = max(max(_merge_end(ws, r, c) for r in range(head_row, head_row + depth)) for c in named)
+    ctx.cover_rows(ws, head_row, last, lo, hi)
     if gaps:
         ctx.notes.append(f"{ws.title}: 表「{where}」は空行（行 {_rows(gaps)}）を挟んで続く行も表として比べました")
     return [n for _, n in cols], rows
+
+
+def _merge_end(ws: Worksheet, row: int, col: int) -> int:
+    """セルを含む結合範囲の右端の列（結合していなければ col）."""
+    m = _merges(ws).get(row, col)
+    return m.c1 if m else col
 
 
 def _section_start(ws: Worksheet, r: int, ctx: ReadContext, header_set: set[str], *, after_blank: bool) -> str:

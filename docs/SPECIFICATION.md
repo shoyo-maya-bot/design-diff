@@ -69,7 +69,7 @@
 
 ### 設定に無いセルの比較
 
-設定の項目（label / block / table）で読んだセル以外の、値のあるセルを比べます。設定のどのシートにも当たらないシート（表紙など）は、
+設定の項目（label / block / table）で読んだセル以外の、値のあるセルを比べます。表（table）で読んだことになるのは、見出しから最後の行までの、表の列の範囲（見出しのある左端の列〜右端の列。横に結合した見出しはその右端まで）のセルです。同じ行でも表の列の範囲の外のセル（表の右のメモ・確認欄など）は、設定に無いセルとして比べます。設定のどのシートにも当たらないシート（表紙など）は、
 シート名で新旧を対応付けて全部のセルを比べます。行は内容で対応付ける（difflib）ので、表の行が増えて下の承認者欄がずれただけなら差分にしません。
 セル番地は変更後の位置（削除された行は変更前の位置）です。`--outside off` で比べません。
 
@@ -102,6 +102,7 @@ API ID → method, path, request{項目名: type, required, max_length, location
     候補で型が違う項目（例: `anyOf: [string, integer]`）は型を比べません
   - `discriminator`: 候補の選び分けには使いません（`mapping` も読みません）。判別用の項目名を注記に添えるだけで、その項目自体は各候補の `properties` から読みます
   - 自分自身を参照するスキーマ（木構造など）は、2 回目に出てきたところで展開をやめ、注記します
+- 要求・応答の本体は JSON のメディアタイプから読みます: `application/json`（`; charset=utf-8` などパラメーター付き・大文字小文字を問わない）、`*+json`（`application/problem+json` など）、`*/*` の順に、最初にスキーマのあるもの。JSON の無い本体（`application/xml` だけなど）は比べません
 - パスは `{…}` の名前の違いと末尾の `/` を無視して比べます
 
 | category | 表示名 |
@@ -111,7 +112,7 @@ API ID → method, path, request{項目名: type, required, max_length, location
 | `field_missing_in_oas` / `field_missing_in_doc` | 片方にしか無い項目 |
 | `type_mismatch` | 型の不一致（設計書の型は `type_map` で変換） |
 | `required_mismatch` | 必須の不一致（`required_marks` のどれかなら必須） |
-| `length_mismatch` | 桁の不一致（設計書に桁があるときだけ） |
+| `length_mismatch` | 桁の不一致（設計書に桁があるときだけ。桁は表示形式に関係なくセルの値で読み、文字列の `1,000` や全角も数値として読む。数値として読めない桁は比べず、警告 `not_a_number`） |
 | `location_mismatch` | 受け渡し位置の不一致（設計書に位置があるときだけ） |
 | `status_missing_in_oas` / `status_missing_in_doc` | 片方にしか無い応答ステータス（設計書に応答の表があるときだけ） |
 
@@ -123,6 +124,6 @@ OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメータ
 
 ## 3. 出力
 
-- Markdown: 種類ごとの件数の表と、種類ごとの「場所 / 項目 / 左 / 右」の表。左は変更前（または設計書）、右は変更後（または OpenAPI）
+- Markdown: 種類ごとの件数の表と、種類ごとの「場所 / 項目 / 左 / 右」の表。左は変更前（または設計書）、右は変更後（または OpenAPI）。セルの値・注意・注記の `&` `<` `>` は `&amp;` `&lt;` `&gt;` に、表のセルの `\` `|` は `\\` `\|` に、改行は `<br>` にします（値の HTML がそのまま解釈されたり、列がずれたりしないように）
 - JSON など: devtools-common の共通レポート形式。`rule_id` = category、`expected` = 左、`actual` = 右。
   設定の見直しが必要な差分は `error`、それ以外の差分と注意（`formula_cache_missing`）は `warning`、注記は `info`
