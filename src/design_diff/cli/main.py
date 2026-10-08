@@ -8,7 +8,8 @@
   --all はペアごとのレポートを output_dir に -f の形式で書き、一覧（-f の形式）を標準出力か -o に出す。
   global.yaml の pairs・output_dir の相対パスは global.yaml のあるフォルダから解決する（実行場所に依らない）。
 終了コード: 0 正常（差分の有無にかかわらず）/ 1 --fail-on-diff で差分あり、設定の見直しが必要、
-  または --all で比べられなかったペアがある / 2 引数・設定・入力ファイルの誤り / 3 内部エラー（想定外の例外）
+  または --all で比べられなかったペアがある / 2 引数・設定・入力ファイルの誤り（壊れた・形式の違う Excel を含む）
+  / 3 内部エラー（想定外の例外）
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from devtools_common.report import Finding, Severity
 
 from .. import __version__
 from ..application import excel_diff, render, spec_diff
+from ..infrastructure.excel_reader import UnreadableBookError
 
 TOOL = "design-diff"
 EXTENSIONS = {"markdown": ".md", "json": ".json", "html": ".html", "csv": ".csv"}
@@ -196,7 +198,10 @@ def cmd_excel(args) -> int:
     for f in (args.before, args.after):
         if not f.is_file():
             raise common_cli.UsageError(f"見つかりません: {f}")
-    result = excel_diff.run(conf, args.before, args.after, outside=args.outside)
+    try:
+        result = excel_diff.run(conf, args.before, args.after, outside=args.outside)
+    except UnreadableBookError as e:
+        raise common_cli.UsageError(str(e)) from None
     common_cli.write_output(render.render(result, args.format, TOOL, __version__), args.output)
     return _exit(result, args.fail_on_diff)
 
@@ -208,6 +213,8 @@ def cmd_spec(args) -> int:
             raise common_cli.UsageError(f"見つかりません: {f}")
     try:
         result = spec_diff.run(conf, args.excel, args.oas)
+    except UnreadableBookError as e:
+        raise common_cli.UsageError(str(e)) from None
     except (KeyError, ValueError) as e:
         raise common_cli.UsageError(f"設定または OpenAPI の誤り: {e}") from None
     common_cli.write_output(render.render(result, args.format, TOOL, __version__), args.output)

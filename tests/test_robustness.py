@@ -430,3 +430,40 @@ def test_exit_codes_are_distinguished(tmp_path: Path, two_books, monkeypatch: py
 
     monkeypatch.setattr(excel_diff, "run", boom)
     assert _run(*args, "--after", str(a1))[0] == 3  # 内部エラー
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"this is not an xlsx file", b"PK\x03\x04broken zip", b""],
+    ids=["text", "broken-zip", "empty"],
+)
+def test_unreadable_excel_is_input_error(tmp_path: Path, two_books, content: bytes):
+    """壊れた・形式の違う Excel は入力の誤り（終了コード 2）. 以前は内部エラー（3）だった."""
+    b, _, _ = two_books
+    bad = tmp_path / "broken.xlsx"
+    bad.write_bytes(content)
+    conf_dir = _all_setup(tmp_path, [])
+    rc, _, err = _run("--config-dir", str(conf_dir), "excel", "--type", "if", "--before", str(b), "--after", str(bad))
+    assert rc == 2
+    assert "Excel を開けません" in err and "broken.xlsx" in err
+    # spec も同じ（API 定義書の Excel が開けない）
+    oas = tmp_path / "openapi.yaml"
+    oas.write_text("openapi: 3.0.0\ninfo: {title: t, version: '1'}\npaths: {}\n", encoding="utf-8")
+    spec_conf = Path(__file__).resolve().parent.parent / "config" / "spec.yaml"
+    rc, _, err = _run("spec", "--excel", str(bad), "--oas", str(oas), "--config", str(spec_conf))
+    assert rc == 2
+    assert "Excel を開けません" in err
+
+
+def test_unreadable_excel_in_all_is_pair_failed(tmp_path: Path, two_books):
+    """--all では開けない Excel のペアも従来どおり pair_failed で続け、終了コード 1."""
+    b, a1, _ = two_books
+    bad = tmp_path / "broken.xlsx"
+    bad.write_bytes(b"not an xlsx")
+    conf_dir = _all_setup(
+        tmp_path, [{"type": "if", "before": str(b), "after": str(bad)}, {"type": "if", "before": str(b), "after": str(a1)}]
+    )
+    rc, out, _ = _run("excel", "--all", "--config-dir", str(conf_dir), "-f", "json")
+    assert rc == 1
+    rules = [f["rule_id"] for f in json.loads(out)["findings"]]
+    assert rules.count("pair_failed") == 1 and rules.count("pair_compared") == 1
