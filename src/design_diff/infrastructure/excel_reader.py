@@ -47,7 +47,41 @@ MAX_CELLS = 1_000_000  # 1 シートで読む値のあるセルの上限（超�
 
 
 class UnreadableBookError(Exception):
-    """Excel を開けない（壊れている・xlsx の形式でない）. 入力の誤りとして扱う（CLI は終了コード 2）."""
+    """Excel を開けない（壊れている・xlsx の形式でない・展開すると大きすぎる）. 入力の誤りとして扱う（CLI は終了コード 2）."""
+
+
+# zip 爆弾対策の上限（xlsx は XML の入った zip）. 普通の設計書には十分な大きさ. 開く前に zip の目録で確かめる
+MAX_UNZIPPED = 512 * 1024**2  # 展開後の合計（バイト）
+MAX_ENTRIES = 10_000  # 部品の数
+MAX_RATIO = 200.0  # 部品ごとの圧縮率（展開後 / 圧縮後）
+RATIO_MIN_SIZE = 1024 * 1024  # 圧縮率はこの大きさ（展開後）を超える部品だけ見る（小さい XML は圧縮率が高くて普通）
+
+
+def check_zip_limits(path: Path) -> None:
+    """xlsx を開く前に、zip の目録（申告された大きさ）で展開後の大きさ・部品の数・圧縮率を確かめる.
+
+    超えれば UnreadableBookError. zip でなければ何もしない（openpyxl が開くときに形式の誤りとして扱う）.
+    zipfile は目録の大きさより多くは展開しない（CRC が合わなければエラー）ので、目録で確かめれば足りる.
+    """
+    try:
+        with zipfile.ZipFile(path) as zf:
+            infos = zf.infolist()
+    except (zipfile.BadZipFile, OSError):
+        return
+    if len(infos) > MAX_ENTRIES:
+        raise UnreadableBookError(f"Excel の部品の数が {len(infos)} 個で、上限 {MAX_ENTRIES} 個を超えています（zip 爆弾の疑い）: {path}")
+    total = 0
+    for info in infos:
+        total += info.file_size
+        if total > MAX_UNZIPPED:
+            raise UnreadableBookError(f"Excel の展開後の大きさが上限 {MAX_UNZIPPED:,} バイトを超えます（zip 爆弾の疑い）: {path}")
+        if info.file_size > RATIO_MIN_SIZE:
+            ratio = info.file_size / max(info.compress_size, 1)
+            if ratio > MAX_RATIO:
+                raise UnreadableBookError(
+                    f"Excel の部品 {info.filename} の圧縮率が {ratio:.0f} 倍で、"
+                    f"上限 {MAX_RATIO:g} 倍を超えています（zip 爆弾の疑い）: {path}"
+                )
 
 
 @dataclass
@@ -101,6 +135,7 @@ def _open(openpyxl: Any, path: Path, *, data_only: bool) -> Any:
     壊れた・形式の違うファイルで openpyxl が出す例外は BadZipFile（zip でない）、InvalidFileException（拡張子）、
     KeyError（xlsx に必要な部品が無い）、XML の構文エラーなどさまざまなので、MemoryError 以外はまとめて扱う.
     """
+    check_zip_limits(path)
     try:
         return openpyxl.load_workbook(path, data_only=data_only)
     except MemoryError:

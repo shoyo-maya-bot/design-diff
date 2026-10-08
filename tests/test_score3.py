@@ -111,3 +111,53 @@ def test_duplicate_api_id_uses_first_sheet_and_warns(tmp_path: Path):
     alerts = [w for rule, w in result.alerts if rule == "duplicate_api_id"]
     assert len(alerts) == 1 and "「API1」" in alerts[0] and "「API2」" in alerts[0]
     assert not [c for c in result.changes if c.category == "method_mismatch"]  # 最初のシート（GET）を使う
+
+
+# --- 5. セットアップの constraints と、入力 xlsx の展開の上限 ---------------------------------------------
+
+
+def test_setup_scripts_use_constraints():
+    sh = (ROOT / "setup.sh").read_text(encoding="utf-8")
+    assert '[ -f constraints.txt ] && C="-c constraints.txt"' in sh
+    assert all("$C" in ln for ln in sh.splitlines() if "pip install" in ln and "-e" in ln)
+    raw = (ROOT / "setup.cmd").read_bytes()
+    assert b"\r\n" in raw
+    cmd = raw.decode("cp932")
+    assert "if exist constraints.txt set C=-c constraints.txt" in cmd
+    assert all("%C%" in ln for ln in cmd.splitlines() if "pip install" in ln and "-e" in ln)
+
+
+def _bomb(path: Path) -> Path:
+    import zipfile
+
+    book(path, {"A1": "x"})
+    with zipfile.ZipFile(path, "a", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("xl/media/pad.bin", b"\0" * (8 * 1024 * 1024))  # 8MB の 0（圧縮率が非常に高い）
+    return path
+
+
+def test_zip_bomb_xlsx_is_input_error(tmp_path: Path):
+    bomb = _bomb(tmp_path / "bomb.xlsx")
+    ok = book(tmp_path / "ok.xlsx", {"A1": "x"})
+    conf_dir = tmp_path / "config"
+    conf_dir.mkdir()
+    import yaml
+
+    (conf_dir / "t.yaml").write_text(yaml.safe_dump(TABLE_CONF), encoding="utf-8")
+    rc, out = run("--config-dir", str(conf_dir), "excel", "--type", "t", "--before", str(ok), "--after", str(bomb))
+    assert rc == 2, out
+    assert "圧縮率" in out and "Traceback" not in out
+
+
+def test_zip_limits_entries_and_total(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from design_diff.infrastructure import excel_reader
+
+    path = book(tmp_path / "a.xlsx", {"A1": "x"})
+    excel_reader.check_zip_limits(path)  # 普通の xlsx は通る
+    monkeypatch.setattr(excel_reader, "MAX_ENTRIES", 2)
+    with pytest.raises(excel_reader.UnreadableBookError, match="部品の数"):
+        excel_reader.check_zip_limits(path)
+    monkeypatch.setattr(excel_reader, "MAX_ENTRIES", 10_000)
+    monkeypatch.setattr(excel_reader, "MAX_UNZIPPED", 100)
+    with pytest.raises(excel_reader.UnreadableBookError, match="展開後の大きさ"):
+        excel_reader.check_zip_limits(path)

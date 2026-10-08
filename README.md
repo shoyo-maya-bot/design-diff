@@ -57,7 +57,7 @@ python -m design_diff excel --all            # design-diff コマンドが PATH 
 |---|---|---|
 | `0` | 正常 | 比べ終えた（`--fail-on-diff` なしなら差分の有無は問わない） |
 | `1` | **差分あり・要確認** | `--fail-on-diff` で差分があった／「設定の見直しが必要」な差分（`label_not_found` など）があった／`--all` で比べられなかったペア（`pair_missing` / `pair_failed`）があった |
-| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by` など）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない）、`spec` の OpenAPI の構文（YAML / JSON）・構造の誤り |
+| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by` など）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない・展開すると大きすぎる）、`spec` の OpenAPI の構文（YAML / JSON）・構造の誤り |
 | `3` | **内部エラー** | 上のどれでもない想定外の例外（`--log-level DEBUG` で詳細） |
 
 CI では「`0` 以外は止める」、差分だけを見るなら「`1` は差分、`2` と `3` は実行の失敗」と区別できます。
