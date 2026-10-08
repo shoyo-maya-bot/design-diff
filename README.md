@@ -116,8 +116,10 @@ VS Code の Copilot Chat で `/design-diff-review` を実行すると、差分�
 ```bash
 ./setup.sh                    # Windows: setup.cmd
 pip install -c constraints.txt -e ".[dev]"   # CI と同じ版で入れる場合（constraints.txt は deps-lock ワークフローが更新）
-ruff check . && ruff format --check . && pytest
+ruff check . && ruff format --check . && pytest -q --cov   # CI と同じ（カバレッジの下限は pyproject.toml の fail_under）
 ```
+
+AI エージェントで変更するときの約束（push 前の確認、チェックを甘くしない など）は [AGENTS.md](AGENTS.md) にあります。
 
 構成: `cli`（引数）→ `application`（設定に従って読む・比べる・出力する）→ `domain`（比較のルール）/ `infrastructure`（Excel・OpenAPI の読み取り）
 
