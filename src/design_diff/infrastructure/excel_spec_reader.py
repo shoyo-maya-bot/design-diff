@@ -37,9 +37,21 @@ def _int(v: str) -> int | None:
 
 
 def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str], list[str]]:
-    """ApiSpec・メモ・警告（数式の計算結果が無いなど）."""
+    """ApiSpec・メモ・警告（数式の計算結果が無いなど）. 読み方の警告（rule_id 付き）は read_with_alerts."""
+    spec, notes, warnings, _ = read_with_alerts(path, conf)
+    return spec, notes, warnings
+
+
+def read_with_alerts(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], list[str], list[str], list[tuple[str, str]]]:
+    """ApiSpec・メモ・警告・読み方の警告（rule_id, 文）.
+
+    同じ API ID のシートが複数あれば、最初のシートを使い、警告 duplicate_api_id を出す
+    （新旧比較の pair_by の duplicate_pair_key と同じ扱い）.
+    """
     wb, warnings = excel_reader.load_book(path)
     notes: list[str] = []
+    alerts: list[tuple[str, str]] = []
+    sheets_of: dict[str, list[str]] = {}
     spec: dict[str, dict[str, Any]] = {}
     type_map = conf.get("type_map", {})
     marks = set(conf.get("required_marks", ["○", "◯", "必須", "Y"]))
@@ -53,6 +65,9 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
         if not api_id:
             notes.append(f"シート「{ws.title}」: API ID のラベル「{conf['api_id']['label']}」が見つからないため読み飛ばしました")
             continue
+        sheets_of.setdefault(api_id, []).append(ws.title)
+        if len(sheets_of[api_id]) > 1:
+            continue  # 同じ API ID の 2 枚目からは読まない（最初のシートを使う）
         entry: dict[str, Any] = {
             "method": (excel_reader.read_label(ws, conf["method"]["label"], _offset(conf["method"])) or "").upper(),
             "path": excel_reader.read_label(ws, conf["path"]["label"], _offset(conf["path"])) or "",
@@ -91,8 +106,16 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
             warnings += [w for _, w in ctx.alerts if w not in warnings]
             if table:
                 entry["statuses"] = sorted({r[st["column"]] for r in table[1] if r.get(st["column"])})
-        if api_id in spec:
-            notes.append(f"{api_id}: 複数のシートにあります（後のシート「{ws.title}」を使いました）")
         spec[api_id] = entry
+    for api_id, titles in sheets_of.items():
+        if len(titles) > 1:
+            listed = "・".join(f"「{t}」" for t in titles)
+            alerts.append(
+                (
+                    "duplicate_api_id",
+                    f"{path.name}: API ID「{api_id}」のシートが {len(titles)} 枚あります（{listed}）。"
+                    f"最初の「{titles[0]}」だけを比べ、残りは比べていません。API ID を見直してください",
+                )
+            )
     warnings += [w for _, w in excel_reader.book_alerts(wb, path.name) if w not in warnings]
-    return spec, notes, warnings
+    return spec, notes, warnings, alerts

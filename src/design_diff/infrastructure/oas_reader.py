@@ -24,9 +24,12 @@ MAX_DEPTH = 20
 def _resolve_once(doc: dict, node: Any) -> Any:
     ref = node["$ref"]
     if not ref.startswith("#/"):
-        raise ValueError(f"外部ファイルの $ref には対応していません: {ref}")
+        raise OpenApiError(f"外部ファイルの $ref には対応していません: {ref}")
     target: Any = doc
     for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")  # JSON Pointer のエスケープ
+        if not isinstance(target, dict) or part not in target:
+            raise OpenApiError(f"$ref の参照先がありません: {ref}")
         target = target[part]
     return target
 
@@ -193,11 +196,38 @@ def read(path: Path) -> dict[str, dict[str, Any]]:
     return read_with_notes(path)[0]
 
 
+class OpenApiError(ValueError):
+    """OpenAPI を読めない（YAML / JSON の構文の誤り、形式の誤り）. 入力の誤りとして扱う（CLI は終了コード 2）."""
+
+
 def read_with_notes(path: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """ApiSpec と、人が確認すべきこと（oneOf / anyOf・循環参照）のメモ."""
-    doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-    if not isinstance(doc, dict) or "paths" not in doc:
-        raise ValueError(f"OpenAPI の形式ではありません（paths がありません）: {path}")
+    """ApiSpec と、人が確認すべきこと（oneOf / anyOf・循環参照）のメモ.
+
+    YAML の構文の誤りや、辞書であるべきところが辞書でないなどの構造の誤りは OpenApiError（ValueError）にする.
+    """
+    try:
+        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        raise OpenApiError(f"OpenAPI の YAML / JSON を読めません（{_brief(e)}）: {path}") from e
+    except UnicodeDecodeError as e:
+        raise OpenApiError(f"OpenAPI を UTF-8 として読めません: {path}") from e
+    if not isinstance(doc, dict) or not isinstance(doc.get("paths"), dict):
+        raise OpenApiError(f"OpenAPI の形式ではありません（paths がありません）: {path}")
+    try:
+        return _read(doc)
+    except OpenApiError:
+        raise
+    except (AttributeError, TypeError, KeyError, IndexError, ValueError) as e:
+        raise OpenApiError(f"OpenAPI の構造が想定と違います（{type(e).__name__}: {e}）: {path}") from e
+
+
+def _brief(e: yaml.YAMLError) -> str:
+    mark = getattr(e, "problem_mark", None)
+    problem = getattr(e, "problem", None) or type(e).__name__
+    return f"{mark.line + 1} 行 {mark.column + 1} 列: {problem}" if mark is not None else str(problem)
+
+
+def _read(doc: dict) -> tuple[dict[str, dict[str, Any]], list[str]]:
     spec: dict[str, dict[str, Any]] = {}
     notes: list[str] = []
     for p, item in (doc.get("paths") or {}).items():

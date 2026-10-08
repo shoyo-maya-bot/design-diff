@@ -57,7 +57,7 @@ python -m design_diff excel --all            # design-diff コマンドが PATH 
 |---|---|---|
 | `0` | 正常 | 比べ終えた（`--fail-on-diff` なしなら差分の有無は問わない） |
 | `1` | **差分あり・要確認** | `--fail-on-diff` で差分があった／「設定の見直しが必要」な差分（`label_not_found` など）があった／`--all` で比べられなかったペア（`pair_missing` / `pair_failed`）があった |
-| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by` など）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない）、`spec` の OpenAPI の構造の誤り |
+| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by` など）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない・展開すると大きすぎる）、`spec` の OpenAPI の構文（YAML / JSON）・構造の誤り |
 | `3` | **内部エラー** | 上のどれでもない想定外の例外（`--log-level DEBUG` で詳細） |
 
 CI では「`0` 以外は止める」、差分だけを見るなら「`1` は差分、`2` と `3` は実行の失敗」と区別できます。
@@ -94,6 +94,8 @@ sheets:
 - 数式セルは計算結果で比べます。ツールで作った Excel など計算結果が保存されていないときは数式の文字列で比べ、レポートに**注意**を出します（Excel で開いて保存し直すと計算結果で比べられます）
 - 「設定の見直しが必要」と出たら、ラベル名か `key` の列名が設計書と合っていません
 - `pair_by` のキーが同じシートが 2 枚以上あると、最初のシートだけを対応付けて比べ、警告 `duplicate_pair_key` を出します
+- 表のキー列が空の行は対応付けられないので比べず、警告 `blank_key`（件数と行番号）を出します
+- `spec` で同じ API ID のシートが 2 枚以上あると、最初のシートだけを比べ、警告 `duplicate_api_id` を出します
 - 走査するのは値のあるセルだけです（書式だけが末尾まで広がったシートでも重くならない）。1 シートの値のあるセルが 100 万個を超えると、
   そこまでの行だけを読んで警告 `sheet_too_large` を出します
 
@@ -114,8 +116,10 @@ VS Code の Copilot Chat で `/design-diff-review` を実行すると、差分�
 ```bash
 ./setup.sh                    # Windows: setup.cmd
 pip install -c constraints.txt -e ".[dev]"   # CI と同じ版で入れる場合（constraints.txt は deps-lock ワークフローが更新）
-ruff check . && ruff format --check . && pytest
+ruff check . && ruff format --check . && pytest -q --cov   # CI と同じ（カバレッジの下限は pyproject.toml の fail_under）
 ```
+
+AI エージェントで変更するときの約束（push 前の確認、チェックを甘くしない など）は [AGENTS.md](AGENTS.md) にあります。
 
 構成: `cli`（引数）→ `application`（設定に従って読む・比べる・出力する）→ `domain`（比較のルール）/ `infrastructure`（Excel・OpenAPI の読み取り）
 

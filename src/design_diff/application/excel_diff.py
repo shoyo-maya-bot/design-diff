@@ -141,6 +141,28 @@ def _keyed(names: list[str], pair_by: str | None, book: str = "", result: DiffRe
     return out
 
 
+BLANK_KEY_SHOWN = 10  # 警告で並べる行番号の数
+
+
+def _warn_blank_key(side: str, sheet: str, item: dict, table, row_numbers: list[int], ctx: excel_reader.ReadContext) -> None:
+    """キー列が空の行（対応付けられないので比べていない行）があれば、件数と行番号で警告する（blank_key）."""
+    key = list(item["key"])
+    if any(k not in table[0] for k in key):
+        return  # キー列が無い（key_column_missing で知らせる）
+    idx = excel_diff.blank_key_rows(key, table[1])
+    if not idx:
+        return
+    nums = [row_numbers[i] for i in idx if i < len(row_numbers)]
+    listed = "、".join(map(str, nums[:BLANK_KEY_SHOWN])) + (" ほか" if len(nums) > BLANK_KEY_SHOWN else "")
+    ctx.alerts.append(
+        (
+            "blank_key",
+            f"{side} {sheet}: 表「{item['name']}」にキー列（{'・'.join(key)}）が空の行が {len(idx)} 行あります（行 {listed}）。"
+            "対応付けられないため比べていません。キーを埋めるか、設定の key を見直してください",
+        )
+    )
+
+
 def _compare_sheet(
     sheet: str, items: list[dict], b_ws, a_ws, b_ctx: excel_reader.ReadContext, a_ctx: excel_reader.ReadContext
 ) -> list[Change]:
@@ -173,5 +195,8 @@ def _compare_sheet(
             if bt is None or at is None:
                 out.append(Change("table_not_found", loc, "", "あり" if bt else "なし", "あり" if at else "なし"))
                 continue
+            b_rows, a_rows = list(b_ctx.table_rows), list(a_ctx.table_rows)
             out += excel_diff.compare_table(loc, list(item["key"]), bt, at)
+            for side, ws, table, nums, ctx in (("変更前", b_ws, bt, b_rows, b_ctx), ("変更後", a_ws, at, a_rows, a_ctx)):
+                _warn_blank_key(side, ws.title, item, table, nums, ctx)
     return out

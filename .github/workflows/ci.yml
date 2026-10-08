@@ -38,7 +38,8 @@ jobs:
           C=""; [ -f constraints.txt ] && C="-c constraints.txt"
           pip install $C -e ".[dev]"
       - run: ruff check . && ruff format --check .
-      - run: pytest -q
+      - name: テストとカバレッジ（下限は pyproject.toml の fail_under）
+        run: pytest -q --cov --cov-report=term
       - name: samples can be regenerated and compared
         run: |
           python samples/make_samples.py -o "$RUNNER_TEMP/samples"
