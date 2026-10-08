@@ -21,7 +21,12 @@ design-diff excel --type api   --before samples/before/API0001_会員照会.xlsx
 design-diff excel --type batch --before samples/before/JOB0001_注文取込.xlsx --after samples/after/JOB0001_注文取込.xlsx
 design-diff excel --all                      # config/global.yaml の pairs をまとめて output/ へ（一覧は標準出力）
 design-diff spec --excel samples/spec/API定義書.xlsx --oas samples/spec/openapi.yaml
+python -m design_diff excel --all            # design-diff コマンドが PATH に無いときは python -m でも同じ
 ```
+
+`config/global.yaml` の `pairs`（`before` / `after`）と `output_dir` の相対パスは、**global.yaml のあるフォルダから**解決します
+（どこで実行しても同じファイルを読む）。以前の「実行場所からの相対」で書いたパスも、global.yaml 基準で見つからなければ
+そのまま使い、書き換えを促す警告を標準エラーに出します。
 
 サンプルは架空の会員・注文システムの設計書です（`python samples/make_samples.py` で作り直せます）。
 
@@ -46,7 +51,16 @@ design-diff spec --excel samples/spec/API定義書.xlsx --oas samples/spec/opena
 | `excel --outside summary｜all｜off` | 設定に無いセル（承認者欄など）の変更の出し方。既定 `summary` はシートごとに件数と場所、`all` は 1 セルずつ、`off` は比べない |
 | `spec --config FILE` | 整合チェックの設定（既定 `config/spec.yaml`） |
 
-終了コード: `0` 正常（差分の有無は問わない）／ `1` `--fail-on-diff` で差分あり、設定の見直しが必要、または `--all` で比べられなかったペアがある ／ `2` 引数・設定の誤り ／ `3` 実行時エラー
+### 終了コード
+
+| コード | 意味 | 主な場合 |
+|---|---|---|
+| `0` | 正常 | 比べ終えた（`--fail-on-diff` なしなら差分の有無は問わない） |
+| `1` | **差分あり・要確認** | `--fail-on-diff` で差分があった／「設定の見直しが必要」な差分（`label_not_found` など）があった／`--all` で比べられなかったペア（`pair_missing` / `pair_failed`）があった |
+| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by` など）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、`spec` の OpenAPI の構造の誤り |
+| `3` | **内部エラー** | 上のどれでもない想定外の例外（壊れた Excel など読めないファイルもここ。`--log-level DEBUG` で詳細） |
+
+CI では「`0` 以外は止める」、差分だけを見るなら「`1` は差分、`2` と `3` は実行の失敗」と区別できます。
 
 `--all` は 1 つのペアのファイルが無い・読めないときも、警告（標準エラーと一覧の `pair_missing` / `pair_failed`）を出して残りのペアを比べ、最後に終了コード 1 で知らせます。
 出力名（`diff_<変更後のファイル名>`）が他のペアと重なるときは `diff_spec-2.md` のように番号を付けます（上書きしません）。
@@ -79,6 +93,9 @@ sheets:
 - セルの値は**表示形式どおりの文字列**で比べます（例: 表示形式 `000` の数値 1 は `001`、`#,##0` の 1500 は `1,500`、`yyyy/mm/dd` の日付は `2026/04/05`）。文字列で入力した `001` と、表示形式でゼロ埋めした数値 1 は同じ値とみなします。値が同じでも表示形式を変えて見た目が変わったセルは差分になります
 - 数式セルは計算結果で比べます。ツールで作った Excel など計算結果が保存されていないときは数式の文字列で比べ、レポートに**注意**を出します（Excel で開いて保存し直すと計算結果で比べられます）
 - 「設定の見直しが必要」と出たら、ラベル名か `key` の列名が設計書と合っていません
+- `pair_by` のキーが同じシートが 2 枚以上あると、最初のシートだけを対応付けて比べ、警告 `duplicate_pair_key` を出します
+- 走査するのは値のあるセルだけです（書式だけが末尾まで広がったシートでも重くならない）。1 シートの値のあるセルが 100 万個を超えると、
+  そこまでの行だけを読んで警告 `sheet_too_large` を出します
 
 整合チェック（`spec`）の設定は `config/spec.yaml` です。OpenAPI 側は operation の `x-api-id`（無ければ `operationId`）を
 API ID として設計書のシートと対応付けます。型の名前は `type_map` で OpenAPI の型にそろえます。

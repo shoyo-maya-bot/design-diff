@@ -156,7 +156,7 @@ def test_all_pairs(samples: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     g["output_dir"] = str(tmp_path / "out")
     for pair in g["pairs"]:
         for side in ("before", "after"):
-            pair[side] = str(samples / Path(pair[side]).relative_to("samples"))
+            pair[side] = str(samples / Path(pair[side]).relative_to("../samples"))
     (conf_dir / "global.yaml").write_text(yaml.safe_dump(g, allow_unicode=True), encoding="utf-8")
     out = io.StringIO()
     with contextlib.redirect_stdout(out):

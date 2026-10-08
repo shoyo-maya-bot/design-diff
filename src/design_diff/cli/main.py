@@ -6,8 +6,9 @@
 
 出力: 既定は Markdown（レビューにそのまま貼れる）。-f json で機械可読。-o でファイルへ。
   --all はペアごとのレポートを output_dir に -f の形式で書き、一覧（-f の形式）を標準出力か -o に出す。
+  global.yaml の pairs・output_dir の相対パスは global.yaml のあるフォルダから解決する（実行場所に依らない）。
 終了コード: 0 正常（差分の有無にかかわらず）/ 1 --fail-on-diff で差分あり、設定の見直しが必要、
-  または --all で比べられなかったペアがある / 2 引数・設定の誤り / 3 実行時エラー
+  または --all で比べられなかったペアがある / 2 引数・設定・入力ファイルの誤り / 3 内部エラー（想定外の例外）
 """
 
 from __future__ import annotations
@@ -92,9 +93,36 @@ def _unique_dest(out_dir: Path, stem: str, ext: str, used: set[str]) -> Path:
     return out_dir / f"{name}{ext}"
 
 
+def _resolve(base: Path, value: str, what: str, *, must_exist: bool) -> Path:
+    """global.yaml に書いた相対パスを、global.yaml のあるフォルダから解決する（実行場所に依らない）.
+
+    互換: global.yaml 基準で見つからず、実行場所からの相対なら見つかるときは、そちらを使って警告する
+    （以前は実行場所からの相対だった）. 絶対パスはそのまま.
+    """
+    p = Path(value)
+    if p.is_absolute():
+        return p
+    resolved = base / p
+    legacy = Path.cwd() / p
+    exists = resolved.exists() if must_exist else resolved.parent.exists() or resolved.exists()
+    if not exists and legacy.exists() and legacy.resolve() != resolved.resolve():
+        print(
+            f"design-diff: global.yaml の {what} {value} は global.yaml のフォルダ（{base.as_posix()}）からの相対では見つからないため、"
+            "実行場所からの相対として使いました（実行場所からの相対は今後なくなります。global.yaml からの相対パスに書き換えてください）",
+            file=sys.stderr,
+        )
+        return legacy
+    return resolved
+
+
 def cmd_all(args) -> int:
-    """global.yaml の pairs をすべて比べる. 欠けたペア・読めないペアは警告して続け、最後に終了コード 1 で知らせる."""
-    g = _config(args.config_dir / "global.yaml")
+    """global.yaml の pairs をすべて比べる. 欠けたペア・読めないペアは警告して続け、最後に終了コード 1 で知らせる.
+
+    pairs の before / after と output_dir の相対パスは global.yaml のあるフォルダから解決する.
+    """
+    g_path = args.config_dir / "global.yaml"
+    g = _config(g_path)
+    base = g_path.resolve().parent
     pairs = g.get("pairs") or []
     confs: dict[str, dict] = {}
     for i, pair in enumerate(pairs):  # 設定の誤りは比べ始める前にまとめて止める（終了コード 2）
@@ -107,14 +135,15 @@ def cmd_all(args) -> int:
             except ValueError as e:
                 raise common_cli.UsageError(str(e)) from None
             confs[pair["type"]] = conf
-    out_dir = Path(g.get("output_dir", "output"))
+    out_dir = _resolve(base, str(g.get("output_dir", "output")), "output_dir", must_exist=False)
     out_dir.mkdir(parents=True, exist_ok=True)
     ext = EXTENSIONS[args.format]
     used: set[str] = set()
     findings: list[Finding] = []
     rc = common_cli.ExitCode.OK
     for pair in pairs:
-        before, after = Path(pair["before"]), Path(pair["after"])
+        before = _resolve(base, str(pair["before"]), "before", must_exist=True)
+        after = _resolve(base, str(pair["after"]), "after", must_exist=True)
         where = f"{before.as_posix()} → {after.as_posix()}"
         missing = [p for p in (before, after) if not p.is_file()]
         if missing:

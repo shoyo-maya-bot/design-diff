@@ -56,8 +56,8 @@ def run(conf: dict[str, Any], before: Path, after: Path, *, outside: str = "summ
     configured_a: set[str] = set()
     for sheet_conf in conf["sheets"]:
         pattern = sheet_conf.get("name", "*")
-        b_keys = _keyed([n for n in b_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"))
-        a_keys = _keyed([n for n in a_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"))
+        b_keys = _keyed([n for n in b_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"), before.name, result)
+        a_keys = _keyed([n for n in a_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"), after.name, result)
         configured_b |= set(b_keys.values())
         configured_a |= set(a_keys.values())
         result.changes += [Change("sheet_removed", n) for k, n in b_keys.items() if k not in a_keys]
@@ -85,6 +85,7 @@ def run(conf: dict[str, Any], before: Path, after: Path, *, outside: str = "summ
             b_rows = excel_reader.outside_rows(b_book[name], set()) if name in rest_b else []
             a_rows = excel_reader.outside_rows(a_book[name], set()) if name in rest_a else []
             result.changes += _compare_outside(name, b_rows, a_rows, outside)
+    result.alerts += excel_reader.book_alerts(b_book, before.name) + excel_reader.book_alerts(a_book, after.name)
     return result
 
 
@@ -110,14 +111,33 @@ def _compare_outside(sheet: str, before: list, after: list, mode: str) -> list[C
     return [Change("outside_changed", sheet, "比較対象外のセル", "", f"{len(diffs)} 件: {refs}（--outside all で 1 セルずつ）")]
 
 
-def _keyed(names: list[str], pair_by: str | None) -> dict[str, str]:
-    """シートの対応付けのキー → シート名. pair_by（正規表現の 1 つ目のグループ）があればそれで、無ければシート名で."""
+def _keyed(names: list[str], pair_by: str | None, book: str = "", result: DiffResult | None = None) -> dict[str, str]:
+    """シートの対応付けのキー → シート名. pair_by（正規表現の 1 つ目のグループ）があればそれで、無ければシート名で.
+
+    pair_by のキーが同じシートが 2 枚以上あると、対応付けられるのは 1 枚だけ（最初のシート）. 残りは比べずに
+    警告 duplicate_pair_key を出す（以前は黙って後のシートで上書きしていた）.
+    """
     if not pair_by:
         return {n: n for n in names}
     out: dict[str, str] = {}
+    dups: dict[str, list[str]] = {}
     for n in names:
         m = re.search(pair_by, n)
-        out[m.group(1) if m else n] = n
+        key = m.group(1) if m else n
+        if key in out:
+            dups.setdefault(key, [out[key]]).append(n)
+            continue
+        out[key] = n
+    if result is not None:
+        for key, sheets in dups.items():
+            listed = "・".join(f"「{n}」" for n in sheets)
+            result.alerts.append(
+                (
+                    "duplicate_pair_key",
+                    f"{book}: pair_by のキー「{key}」のシートが {len(sheets)} 枚あります（{listed}）。"
+                    f"最初の「{sheets[0]}」だけを対応付けて比べ、残りは比べていません。pair_by の正規表現を見直してください",
+                )
+            )
     return out
 
 

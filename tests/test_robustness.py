@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -19,7 +20,7 @@ import yaml
 from devtools_common.cli import run_main
 from openpyxl import Workbook
 
-from design_diff.application import excel_diff
+from design_diff.application import excel_diff, render
 from design_diff.cli import main as cli
 from design_diff.domain.excel_diff import compare_table
 
@@ -280,3 +281,152 @@ def samples_dir(tmp_path: Path) -> Path:
     spec.loader.exec_module(mod)
     mod.generate(tmp_path / "s")
     return tmp_path / "s"
+
+
+# --- 第 2 回: 読む範囲・pair_by の重複・1 セル行での打ち切り・global.yaml の相対パス・python -m ----------------
+
+
+def test_format_only_cells_far_away_are_not_scanned(tmp_path: Path):
+    """書式だけのセルが末尾まで広がっても、値のある範囲だけを読む（使用範囲全体のセルを作らない）."""
+    from openpyxl import load_workbook
+    from openpyxl.styles import Font
+
+    from design_diff.infrastructure import excel_reader
+
+    p = book(tmp_path / "b.xlsx", table_cells(["項番", "項目名"], [[1, "id"], [2, "name"]]))
+    wb = load_workbook(p)
+    wb.active["XFD50000"].font = Font(bold=True)  # 書式だけ（値なし）
+    wb.active.merge_cells("D1:XFD1")  # 値の無い列まで続く結合
+    wb.save(p)
+    started = time.perf_counter()
+    wb = excel_reader.open_book(p)
+    ws = wb.active
+    assert ws.max_row == 50000  # openpyxl の使用範囲は書式のセルまで
+    stored = len(ws._cells)  # 結合の覆われたセルは openpyxl が読み込み時に作る
+    cols, rows = excel_reader.read_table(ws, "項番")
+    assert cols == ["項番", "項目名"] and len(rows) == 2
+    excel_reader.outside_rows(ws, set())
+    assert len(ws._cells) == stored  # 走査で空のセルを作っていない
+    assert changes_of(TABLE_CONF, p, p) == []
+    assert time.perf_counter() - started < 30  # 使用範囲（5 万行 × 16,384 列）を回ると数分かかる
+
+
+def test_sheet_over_cell_limit_is_warned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    from design_diff.infrastructure import excel_reader
+
+    monkeypatch.setattr(excel_reader, "MAX_CELLS", 5)
+    header = ["項番", "項目名"]
+    before = book(tmp_path / "b.xlsx", table_cells(header, [[1, "id"], [2, "name"], [3, "x"]]))
+    after = book(tmp_path / "a.xlsx", table_cells(header, [[1, "id"], [2, "name"], [3, "y"]]))
+    result = excel_diff.run(TABLE_CONF, before, after)
+    alerts = [msg for rule, msg in result.alerts if rule == "sheet_too_large"]
+    assert len(alerts) == 2 and "上限 5 個" in alerts[0] and "行 2 までだけ" in alerts[0]
+    assert result.changes == []  # 上限を超えた行（行 4）は読んでいない
+    md = render.render(result, "markdown", "design-diff", "0")
+    assert "上限 5 個" in md
+
+
+def test_pair_by_duplicate_key_is_warned(tmp_path: Path):
+    wb = Workbook()
+    wb.active.title = "API0001_旧"
+    wb.create_sheet("API0001_新")
+    wb.save(tmp_path / "b.xlsx")
+    wb = Workbook()
+    wb.active.title = "API0001_会員"
+    wb.save(tmp_path / "a.xlsx")
+    conf = {"sheets": [{"name": "API*", "pair_by": r"^(API\d+)", "items": []}]}
+    result = excel_diff.run(conf, tmp_path / "b.xlsx", tmp_path / "a.xlsx")
+    dup = [msg for rule, msg in result.alerts if rule == "duplicate_pair_key"]
+    assert len(dup) == 1
+    assert "b.xlsx" in dup[0] and "API0001" in dup[0] and "「API0001_旧」・「API0001_新」" in dup[0]
+    assert ("sheet_renamed", "シート名", "API0001_旧", "API0001_会員") in [(c.category, c.field, c.before, c.after) for c in result.changes]
+
+
+def test_single_cell_row_after_blank_sets_table_truncated(tmp_path: Path):
+    """空行の後の 1 セルだけの行で表を打ち切ったときも table_truncated を出す（表の続きかもしれない）."""
+    cells = table_cells(["項番", "項目名", "桁"], [[1, "id", 10], [2, "name", 50]])
+    cells |= {"A5": "3", "A6": "補足"}
+    before = book(tmp_path / "b.xlsx", cells)
+    result = excel_diff.run(TABLE_CONF, before, before)
+    trunc = [msg for rule, msg in result.alerts if rule == "table_truncated"]
+    assert len(trunc) == 1 and "行 5" in trunc[0] and "A5「3」" in trunc[0]
+
+
+def test_single_cell_row_that_is_a_configured_label_is_not_warned(tmp_path: Path):
+    cells = table_cells(["項番", "項目名"], [[1, "id"]], start=2) | {"A1": "入力項目", "A4": "出力項目"}
+    cells |= table_cells(["項番", "項目名"], [[1, "result"]], start=5)
+    conf = {
+        "sheets": [
+            {
+                "name": "IF*",
+                "items": [
+                    {"kind": "table", "name": "入力", "title": "入力項目", "header": "項番", "key": ["項番"]},
+                    {"kind": "table", "name": "出力", "title": "出力項目", "header": "項番", "key": ["項番"]},
+                ],
+            }
+        ]
+    }
+    p = book(tmp_path / "b.xlsx", cells)
+    assert [r for r, _ in excel_diff.run(conf, p, p).alerts] == []
+
+
+def test_global_yaml_paths_are_relative_to_the_config(tmp_path: Path, two_books, monkeypatch: pytest.MonkeyPatch):
+    b, a1, _ = two_books
+    conf_dir = _all_setup(tmp_path, [])
+    g = {"output_dir": "../out", "pairs": [{"type": "if", "before": "../b.xlsx", "after": "../x/spec.xlsx"}]}
+    (conf_dir / "global.yaml").write_text(yaml.safe_dump(g, allow_unicode=True), encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)  # 実行場所に依らない
+    rc, _, err = _run("excel", "--all", "--config-dir", str(conf_dir))
+    assert rc == 0, err
+    assert (tmp_path / "out" / "diff_spec.md").is_file()
+    assert not (elsewhere / "out").exists()
+    assert "相対" not in err
+
+
+def test_global_yaml_legacy_cwd_relative_paths_still_work_with_warning(tmp_path: Path, two_books, monkeypatch: pytest.MonkeyPatch):
+    b, a1, _ = two_books
+    conf_dir = _all_setup(tmp_path, [])
+    g = {"output_dir": "out", "pairs": [{"type": "if", "before": "b.xlsx", "after": "x/spec.xlsx"}]}  # 以前の書き方（実行場所から）
+    (conf_dir / "global.yaml").write_text(yaml.safe_dump(g, allow_unicode=True), encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    rc, _, err = _run("excel", "--all", "--config-dir", str(conf_dir))
+    assert rc == 0
+    assert "実行場所からの相対として使いました" in err
+    assert (conf_dir / "out" / "diff_spec.md").is_file()  # output_dir は global.yaml 基準（作るフォルダは常に存在しないため）
+
+
+def test_python_dash_m_runs_the_cli():
+    import subprocess  # nosec B404
+    import sys
+
+    root = Path(__file__).resolve().parent.parent
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-m", "design_diff", "--version"], capture_output=True, text=True, encoding="utf-8", cwd=root, check=False
+    )
+    assert proc.returncode == 0 and "design-diff" in proc.stdout
+    proc = subprocess.run(  # nosec B603
+        [sys.executable, "-m", "design_diff", "excel", "--type", "api"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        cwd=root,
+        check=False,
+    )
+    assert proc.returncode == 2  # 入力・使い方の誤り
+
+
+def test_exit_codes_are_distinguished(tmp_path: Path, two_books, monkeypatch: pytest.MonkeyPatch):
+    b, a1, _ = two_books
+    conf_dir = _all_setup(tmp_path, [])
+    args = ["--config-dir", str(conf_dir), "excel", "--type", "if", "--before", str(b)]
+    assert _run(*args, "--after", str(a1))[0] == 0  # 差分ありでも既定は 0
+    assert _run(*args, "--after", str(a1), "--fail-on-diff")[0] == 1  # 差分あり
+    assert _run(*args, "--after", str(tmp_path / "none.xlsx"))[0] == 2  # 入力の誤り
+
+    def boom(*_a, **_k):
+        raise RuntimeError("想定外")
+
+    monkeypatch.setattr(excel_diff, "run", boom)
+    assert _run(*args, "--after", str(a1))[0] == 3  # 内部エラー

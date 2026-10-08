@@ -1,5 +1,6 @@
-# design-diff excel --all で一括比較するペア（パスは実行場所からの相対）
-output_dir: output
+# design-diff excel --all で一括比較するペア
+# パス（before / after / output_dir）はこのファイルのあるフォルダからの相対（実行場所に依らない）
+output_dir: ../output
 pairs:
-  - {type: api, before: samples/before/API0001_会員照会.xlsx, after: samples/after/API0001_会員照会.xlsx}
-  - {type: batch, before: samples/before/JOB0001_注文取込.xlsx, after: samples/after/JOB0001_注文取込.xlsx}
+  - {type: api, before: ../samples/before/API0001_会員照会.xlsx, after: ../samples/after/API0001_会員照会.xlsx}
+  - {type: batch, before: ../samples/before/JOB0001_注文取込.xlsx, after: ../samples/after/JOB0001_注文取込.xlsx}

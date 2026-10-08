@@ -94,4 +94,5 @@ def read(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[str, Any]], l
         if api_id in spec:
             notes.append(f"{api_id}: 複数のシートにあります（後のシート「{ws.title}」を使いました）")
         spec[api_id] = entry
+    warnings += [w for _, w in excel_reader.book_alerts(wb, path.name) if w not in warnings]
     return spec, notes, warnings

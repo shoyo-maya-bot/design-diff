@@ -6,6 +6,11 @@
 
 ### Added
 
+- `python -m design_diff`（`design-diff` コマンドと同じ）
+- 警告 `duplicate_pair_key`（`pair_by` のキーが同じシートが 2 枚以上）、`sheet_too_large`（値のあるセルが 1 シート 100 万個超）
+- 空行の後の 1 セルだけの行で表を終わりにしたときも `table_truncated` を出す
+- README に終了コードの区別（差分あり・要確認 / 入力・使い方の誤り / 内部エラー）を表で記載
+
 - 設定に無いセル（表紙・承認者欄など）の変更も出す（`outside_changed`。シートごとに件数と場所）。
   `--outside all` で 1 セルずつ（`outside_cell_changed`）、`--outside off` で比べない。行の挿入でずれただけのセルは差分にしない
 - 表・文章の設定 `end_blank_rows`（表・文章の終わりとみなす連続した空行の数。既定 2）
@@ -22,6 +27,10 @@
 - `--config-dir` をサブコマンドの後に書くと引数エラーになっていた問題を修正
 
 ### Changed（利用者に見える変更）
+
+- `config/global.yaml` の `pairs`・`output_dir` の相対パスを global.yaml のあるフォルダから解決する（実行場所に依らない）。
+  以前の書き方（実行場所からの相対）も、global.yaml 基準で見つからなければそのまま使って警告する
+- Excel は値のあるセルだけを走査する（書式だけが末尾まで広がったシートでメモリと時間を使わない）
 
 - **差分が増えることがあります**: 設定に無いセルの変更（`outside_changed`）、空行より下の表の行、2 列目の同名の列、重複キーの行が新たに差分に出る。
   これまでと同じ範囲だけ見るには `--outside off`、表の読み方を戻すには `end_blank_rows: 1`

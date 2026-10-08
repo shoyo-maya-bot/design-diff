@@ -30,6 +30,8 @@ EXCEL_CATEGORIES = {
 ALERT_LABELS = {
     "duplicate_column": "同じ名前の列",
     "table_truncated": "表の続きを比べていない",
+    "duplicate_pair_key": "pair_by のキーが重複したシート",
+    "sheet_too_large": "シートの値が多すぎて一部だけ読んだ",
 }
 LABELS = {**EXCEL_CATEGORIES, **SPEC_CATEGORIES}
 CONFIG_PROBLEMS = {"label_not_found", "table_not_found", "key_column_missing", "duplicate_key"}

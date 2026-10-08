@@ -8,6 +8,10 @@
 （設定にある別のラベル、空行の後の 1 セルだけの行、同じ見出し行の繰り返し）で終わりとする.
 読んだセルは ReadContext.covered に記録する（設定に無いセルの変更を拾うため）.
 
+走査するのは値のあるセルだけ（シートの「使用範囲」全体ではない）. 書式だけのセルが末尾の行・列まで広がった
+シートでも、値のある範囲だけを読む. 値のあるセルが MAX_CELLS 個を超えるシートは、そこまでの行だけを読み、
+警告 sheet_too_large を出す（sheet_alerts）.
+
 数式セルは、Excel が保存した計算結果（キャッシュ）を読む. ツール（openpyxl など）で作った Excel は計算結果を
 持たないため、そのままでは数式セルが空になる. その場合は数式の文字列（例: =SUM(B4:B5)）を値として読み、
 警告を出す（Excel で開いて保存し直すと計算結果で比べられる）.
@@ -17,17 +21,19 @@ from __future__ import annotations
 
 import math
 import weakref
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from devtools_common.excel import (
+    Merge,
     MergeMap,
     header_depth,
     header_names,
-    load_workbook_with_formula_fallback,
     looks_numeric,
     render_cell,
+    require_openpyxl,
 )
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
@@ -36,6 +42,7 @@ from ..domain.model import text
 
 MAX_HEADER_ROWS = 3
 END_BLANK_ROWS = 2  # 表・文章の終わりとみなす連続した空行の数（既定）
+MAX_CELLS = 1_000_000  # 1 シートで読む値のあるセルの上限（超えた分の行は読まずに警告）
 
 
 @dataclass
@@ -63,7 +70,7 @@ class ReadContext:
 
     def cover_rows(self, ws: Worksheet, first: int, last: int) -> None:
         for r in range(first, last + 1):
-            for c in range(1, ws.max_column + 1):
+            for c in range(1, _sheet(ws).max_col + 1):
                 self.cover(ws, r, c)
 
 
@@ -71,9 +78,50 @@ def open_book(path: Path) -> Any:
     return load_book(path)[0]
 
 
+def _formula_text(cell: Any) -> str | None:
+    if getattr(cell, "data_type", None) != "f" or cell.value is None:
+        return None
+    v = cell.value
+    if isinstance(v, str):
+        return v
+    text_attr = getattr(v, "text", None)  # 配列数式（ArrayFormula）
+    return text_attr if isinstance(text_attr, str) else str(v)
+
+
+def _load_with_formula_fallback(path: Path) -> tuple[Any, list[str]]:
+    """devtools_common.excel.load_workbook_with_formula_fallback と同じ結果を、値のあるセルだけを見て作る.
+
+    共通版は数式を読み取り専用モードの iter_rows で探すため、書式だけのセルが末尾まで広がったシートでは
+    使用範囲の全セル（例: 5 万行 × 16,384 列）を回って非常に遅い. ここでは通常モードで読み、ファイルにあるセルだけを見る.
+    """
+    openpyxl = require_openpyxl()
+    if not path.is_file():
+        raise FileNotFoundError(f"Excel が見つかりません: {path}")
+    wb = openpyxl.load_workbook(path, data_only=True)
+    formulas = openpyxl.load_workbook(path)
+    missing: list[str] = []
+    try:
+        for fws in formulas.worksheets:
+            if fws.title not in wb.sheetnames or not hasattr(fws, "_cells"):
+                continue
+            ws = wb[fws.title]
+            for (r, c), cell in sorted(fws._cells.items()):
+                f = _formula_text(cell)
+                if f is None:
+                    continue
+                target = ws._cells.get((r, c))
+                if target is None or target.value is None:
+                    target = ws.cell(r, c)
+                    target.value = f
+                    missing.append(f"{fws.title}!{target.coordinate}")
+    finally:
+        formulas.close()
+    return wb, missing
+
+
 def load_book(path: Path) -> tuple[Any, list[str]]:
     """計算結果の値で読んだブックと、警告（計算結果が保存されていない数式セルがあったとき）."""
-    wb, missing = load_workbook_with_formula_fallback(path)
+    wb, missing = _load_with_formula_fallback(path)
     if not missing:
         return wb, []
     examples = "、".join(missing[:3]) + (" など" if len(missing) > 3 else "")
@@ -84,19 +132,87 @@ def load_book(path: Path) -> tuple[Any, list[str]]:
     ]
 
 
-_MERGES: weakref.WeakKeyDictionary[Any, MergeMap] = weakref.WeakKeyDictionary()
+@dataclass
+class _Sheet:
+    """シートの値のあるセルの索引（1 シートにつき 1 回だけ作る）.
+
+    cells: (行, 列) → セル（行・列の順）. rows: 行 → 値のある列（昇順）
+    max_row / max_col: 値のある範囲の右下（値が無ければ 0）
+    merges: 結合の索引（値のある範囲で切り詰める. 列や行全体の結合でもメモリを使わない）
+    alerts: 読み方の警告（上限を超えて読まなかった行など）
+    """
+
+    cells: dict[tuple[int, int], Any]
+    rows: dict[int, list[int]]
+    max_row: int
+    max_col: int
+    merges: MergeMap
+    alerts: list[tuple[str, str]] = field(default_factory=list)
+
+
+_SHEETS: weakref.WeakKeyDictionary[Any, _Sheet] = weakref.WeakKeyDictionary()
+
+
+def _stored_cells(ws: Worksheet) -> list[tuple[tuple[int, int], Any]]:
+    """値のあるセル. openpyxl が持っているセルだけを見る（ws.cell / iter_rows は無いセルを作るので使わない）."""
+    store = getattr(ws, "_cells", None)
+    if isinstance(store, dict):
+        return [(k, c) for k, c in store.items() if c.value is not None]
+    return [((c.row, c.column), c) for row in ws.iter_rows() for c in row if c.value is not None]  # pragma: no cover
+
+
+def _index(ws: Worksheet) -> _Sheet:
+    found = sorted(_stored_cells(ws), key=lambda kc: kc[0])
+    alerts: list[tuple[str, str]] = []
+    if len(found) > MAX_CELLS:
+        cut = found[MAX_CELLS][0][0]  # この行から下は読まない（行の途中では切らない）
+        n = len(found)
+        found = [kc for kc in found if kc[0][0] < cut]
+        alerts.append(
+            (
+                "sheet_too_large",
+                f"{ws.title}: 値のあるセルが {n:,} 個あり、上限 {MAX_CELLS:,} 個を超えたため、行 {cut - 1} までだけを読みました"
+                f"（行 {cut} から下は比べていません）。シートを分けるか、不要な値を消してください",
+            )
+        )
+    cells = dict(found)
+    rows: dict[int, list[int]] = {}
+    for r, c in cells:
+        rows.setdefault(r, []).append(c)
+    max_row = max(rows, default=0)
+    max_col = max((cols[-1] for cols in rows.values()), default=0)
+    return _Sheet(cells, rows, max_row, max_col, MergeMap(_clipped_merges(ws, max_row, max_col)), alerts)
+
+
+def _clipped_merges(ws: Worksheet, max_row: int, max_col: int) -> Iterator[Merge]:
+    """結合範囲を値のある範囲で切り詰める（左上が範囲外の結合は値を持たないので除く）."""
+    ranges = getattr(getattr(ws, "merged_cells", None), "ranges", ()) or ()
+    for r in ranges:
+        if r.min_row > max_row or r.min_col > max_col:
+            continue
+        yield Merge(r.min_row, r.min_col, min(r.max_row, max(max_row, r.min_row)), min(r.max_col, max(max_col, r.min_col)))
+
+
+def _sheet(ws: Worksheet) -> _Sheet:
+    s = _SHEETS.get(ws)
+    if s is None:
+        s = _SHEETS[ws] = _index(ws)
+    return s
 
 
 def _merges(ws: Worksheet) -> MergeMap:
-    m = _MERGES.get(ws)
-    if m is None:
-        m = _MERGES[ws] = MergeMap.from_worksheet(ws)
-    return m
+    return _sheet(ws).merges
+
+
+def book_alerts(wb: Any, label: str) -> list[tuple[str, str]]:
+    """読んだシートの警告（rule_id, 文）. 例: sheet_too_large（値のあるセルが上限を超えた）. label はファイル名など."""
+    return [(rule, f"{label}: {msg}") for ws in wb.worksheets if ws in _SHEETS for rule, msg in _SHEETS[ws].alerts]
 
 
 def cell_text(ws: Worksheet, row: int, col: int) -> str:
-    """セルの値を表示形式どおりの文字列で（前後の空白は除く）. 結合で埋めない."""
-    return text(render_cell(ws.cell(row, col))[0])
+    """セルの値を表示形式どおりの文字列で（前後の空白は除く）. 結合で埋めない. 値の無いセルは作らずに空."""
+    cell = _sheet(ws).cells.get((row, col))
+    return "" if cell is None else text(render_cell(cell)[0])
 
 
 def _merged_value(ws: Worksheet, row: int, col: int) -> str:
@@ -113,13 +229,12 @@ def outside_rows(ws: Worksheet, covered: set[tuple[int, int]]) -> list[tuple[int
     """読んだセル（covered）以外の、値のあるセルを行ごとに（行番号, 列 → 値）. 結合の左上以外は除く."""
     rows: dict[int, dict[int, str]] = {}
     merges = _merges(ws)
-    for row in ws.iter_rows():
-        for c in row:
-            if c.value is None or (c.row, c.column) in covered or merges.is_covered(c.row, c.column):
-                continue
-            v = text(render_cell(c)[0])
-            if v:
-                rows.setdefault(c.row, {})[c.column] = v
+    for (r, col), c in _sheet(ws).cells.items():
+        if (r, col) in covered or merges.is_covered(r, col):
+            continue
+        v = text(render_cell(c)[0])
+        if v:
+            rows.setdefault(r, {})[col] = v
     return sorted(rows.items())
 
 
@@ -129,10 +244,9 @@ def _norm_label(v: Any) -> str:
 
 def find_label(ws: Worksheet, label: str) -> tuple[int, int] | None:
     want = _norm_label(label)
-    for row in ws.iter_rows():
-        for c in row:
-            if c.value is not None and _norm_label(c.value) == want:
-                return c.row, c.column
+    for pos, c in _sheet(ws).cells.items():  # 行・列の順
+        if _norm_label(c.value) == want:
+            return pos
     return None
 
 
@@ -152,7 +266,7 @@ def read_label(ws: Worksheet, label: str, offset: tuple[int, int] = (0, 1), ctx:
 def _row_cells(ws: Worksheet, r: int) -> list[tuple[int, str]]:
     """行 r の値のあるセル（列, 結合で埋めない値）."""
     out = []
-    for c in range(1, ws.max_column + 1):
+    for c in _sheet(ws).rows.get(r, ()):
         if not _merges(ws).is_covered(r, c):
             v = cell_text(ws, r, c)
             if v:
@@ -181,7 +295,7 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0), ctx:
     lines: list[str] = []
     blank = 0
     gaps: list[int] = []
-    while r <= ws.max_row:
+    while r <= _sheet(ws).max_row:
         v = _merged_value(ws, r, c)
         if not v:
             blank += 1
@@ -227,8 +341,8 @@ def _count_header_rows(ws: Worksheet, head_row: int) -> int:
         lambda r, c: _own_value(ws, r, c),
         head_row,
         first_col=1,
-        last_col=ws.max_column,
-        last_row=ws.max_row,
+        last_col=_sheet(ws).max_col,
+        last_row=_sheet(ws).max_row,
         max_rows=MAX_HEADER_ROWS,
     )
 
@@ -261,11 +375,12 @@ def read_table(
             return None
         head_row = pos[0]
     depth = header_rows or _count_header_rows(ws, head_row)
-    names = header_names(lambda r, c: _norm_label(_merged_value(ws, r, c)), head_row, depth, range(1, ws.max_column + 1))
+    width = range(1, _sheet(ws).max_col + 1)
+    names = header_names(lambda r, c: _norm_label(_merged_value(ws, r, c)), head_row, depth, width)
     cols: list[tuple[int, str]] = []
     seen: dict[str, list[int]] = {}
     prev = ""
-    for c, name in zip(range(1, ws.max_column + 1), names, strict=True):
+    for c, name in zip(width, names, strict=True):
         same_merge = name == prev and all(_merges(ws).anchor(r, c)[1] < c for r in range(head_row, head_row + depth))
         prev = name
         if not name or same_merge:  # 横に結合した見出しの 2 列目以降は同じ列（データも結合で埋まる）
@@ -293,7 +408,7 @@ def read_table(
     last = head_row + depth - 1
     blank = 0
     gaps: list[int] = []
-    while r <= ws.max_row:
+    while r <= _sheet(ws).max_row:
         values = {name: _merged_value(ws, r, c) for c, name in cols}
         if not any(values.values()):
             blank += 1
@@ -302,7 +417,10 @@ def read_table(
                 break
             r += 1
             continue
-        if _section_start(ws, r, ctx, header_set, after_blank=blank > 0):
+        reason = _section_start(ws, r, ctx, header_set, after_blank=blank > 0)
+        if reason == "single_cell":
+            _warn_single_cell_end(ws, r, ctx, where)
+        if reason:
             break
         if blank:
             gaps += list(range(r - blank, r))
@@ -316,21 +434,40 @@ def read_table(
     return [n for _, n in cols], rows
 
 
-def _section_start(ws: Worksheet, r: int, ctx: ReadContext, header_set: set[str], *, after_blank: bool) -> bool:
-    """行 r が次の節の始まり（表の終わり）か."""
+def _section_start(ws: Worksheet, r: int, ctx: ReadContext, header_set: set[str], *, after_blank: bool) -> str:
+    """行 r が次の節の始まり（表の終わり）なら理由、そうでなければ "".
+
+    "label": 設定にある別の項目のラベル / "header": 同じ見出し行の繰り返し（次の表）/
+    "single_cell": 空行の後の 1 セルだけの行（次の節の表題とみなす. 設定に無いので推測）
+    """
     if _starts_label(ws, r, ctx):
-        return True
+        return "label"
     cells = _row_cells(ws, r)
     if {_norm_label(v) for _, v in cells} <= header_set and len(cells) >= 2:
-        return True  # 同じ見出し行の繰り返し（次の表）
-    return after_blank and len(cells) == 1 and len(header_set) >= 2  # 空行の後の 1 セルだけの行 = 次の節の表題
+        return "header"
+    if after_blank and len(cells) == 1 and len(header_set) >= 2:
+        return "single_cell"
+    return ""
+
+
+def _warn_single_cell_end(ws: Worksheet, r: int, ctx: ReadContext, where: str) -> None:
+    """空行の後の 1 セルだけの行で表を終わりにしたとき: 表の続き（1 列だけ書いた行）かもしれないので警告する."""
+    (c, v), *_ = _row_cells(ws, r)
+    ctx.alerts.append(
+        (
+            "table_truncated",
+            f"{ws.title}: 表「{where}」は空行の後の 1 セルだけの行 {r}（{get_column_letter(c)}{r}「{v}」）を次の節の表題とみなして"
+            "終わりとしました（その行から下は表として比べていません）。次の節の表題なら、その表も設定に書くとこの警告は出ません。"
+            "表の続きなら空行を詰めてください",
+        )
+    )
 
 
 def _warn_if_truncated(
     ws: Worksheet, start: int, cols: list[tuple[int, str]], rows: list[dict[str, str]], ctx: ReadContext, where: str
 ) -> None:
     """表の終わりと判断した空行の下に、表の続きらしい行があれば警告する."""
-    for r in range(start, ws.max_row + 1):
+    for r in range(start, _sheet(ws).max_row + 1):
         values = [_merged_value(ws, r, c) for c, _ in cols]
         if not any(values):
             continue
