@@ -57,6 +57,7 @@ class ReadContext:
     stop_labels: 表・文章の終わりとみなすラベル（同じシートの設定にある別の項目のラベル・表題・見出し）
     end_blank_rows: 連続した空行がこの数だけ続いたら終わり
     covered: 読んだセル（行, 列）. 設定に無いセルの比較から除く
+    table_rows: 直前の read_table で読んだ行のシートの行番号（警告で行番号を示すため）
     alerts: 警告（rule_id, 文）. notes: 注記
     """
 
@@ -65,6 +66,7 @@ class ReadContext:
     covered: set[tuple[int, int]] = field(default_factory=set)
     alerts: list[tuple[str, str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    table_rows: list[int] = field(default_factory=list)  # 直前の read_table で読んだ行の、シートの行番号（行と同じ順）
 
     def cover(self, ws: Worksheet, row: int, col: int) -> None:
         m = _merges(ws).get(row, col)
@@ -425,6 +427,7 @@ def read_table(
             )
     header_set = {n for _, n in cols}
     rows: list[dict[str, str]] = []
+    ctx.table_rows = []
     r = head_row + depth
     last = head_row + depth - 1
     blank = 0
@@ -447,6 +450,7 @@ def read_table(
             gaps += list(range(r - blank, r))
         blank = 0
         rows.append(values)
+        ctx.table_rows.append(r)
         last = r
         r += 1
     ctx.cover_rows(ws, head_row, last)

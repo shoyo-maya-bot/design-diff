@@ -32,6 +32,8 @@ ALERT_LABELS = {
     "table_truncated": "表の続きを比べていない",
     "duplicate_pair_key": "pair_by のキーが重複したシート",
     "sheet_too_large": "シートの値が多すぎて一部だけ読んだ",
+    "blank_key": "キー列が空の行（比べていない）",
+    "duplicate_api_id": "同じ API ID のシート（最初のシートだけ比べた）",
 }
 LABELS = {**EXCEL_CATEGORIES, **SPEC_CATEGORIES}
 CONFIG_PROBLEMS = {"label_not_found", "table_not_found", "key_column_missing", "duplicate_key"}

@@ -4,7 +4,7 @@
 - label: ラベルのセルからの相対位置の値（例: 「ジョブ ID」の右隣）
 - block: ラベルの下に続く複数行を連結した文章（例: 「処理概要」の下の段落）
 - table: 見出し行のある表。キー列で行を対応付け、追加・削除・変更された行とセルを出す
-  （キーが重複した行は、同じキーの中で出現順に対応付ける）
+  （キーが重複した行は、同じキーの中で出現順に対応付ける. キー列が空の行は対応付けられないので比べない. blank_key_rows で警告する）
 - 設定に無いセル: 行の並びを対応付けて（行の挿入・削除でずれても）値の違うセルを出す
 """
 
@@ -74,6 +74,11 @@ def compare_table(location: str, key: list[str], before: Table, after: Table) ->
             if bv != av:
                 changes.append(Change("cell_changed", location, f"{k} の {c}", bv, av))
     return changes
+
+
+def blank_key_rows(key: list[str], rows: list[dict[str, str]]) -> list[int]:
+    """キー列がすべて空の行の位置（0 始まり）. compare_table はこの行を比べない（対応付けのキーが無いため）."""
+    return [i for i, r in enumerate(rows) if not any(text(r.get(c)) for c in key)]
 
 
 def column_letter(col: int) -> str:

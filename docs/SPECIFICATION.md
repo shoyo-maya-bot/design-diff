@@ -59,7 +59,11 @@
 
 読み方の警告（レポートの冒頭の**注意**。JSON では warning）: `formula_cache_missing`（数式の計算結果が無い）、
 `duplicate_column`（同じ名前の列）、`table_truncated`（表の続きらしい行を比べていない）、
-`duplicate_pair_key`（`pair_by` のキーが重複したシート）、`sheet_too_large`（値のあるセルが上限を超え、一部の行だけ読んだ）。
+`duplicate_pair_key`（`pair_by` のキーが重複したシート）、`sheet_too_large`（値のあるセルが上限を超え、一部の行だけ読んだ）、
+`blank_key`（表のキー列が空の行。対応付けられないので比べていない。変更前・変更後ごとに件数と行番号（先頭 10 行）を出す）。
+
+- **キー列が空の行**: `key` の列がすべて空の行は、新旧で対応付けられないため比べません（差分にも出ません）。そのような行があれば
+  警告 `blank_key` に、変更前・変更後のどちらか、表の名前、行数、シートの行番号を出します。キーを埋めるか、`key` を見直してください
 
 ### 設定に無いセルの比較
 
@@ -109,7 +113,11 @@ API ID → method, path, request{項目名: type, required, max_length, location
 | `location_mismatch` | 受け渡し位置の不一致（設計書に位置があるときだけ） |
 | `status_missing_in_oas` / `status_missing_in_doc` | 片方にしか無い応答ステータス（設計書に応答の表があるときだけ） |
 
-読み飛ばしたシート（API ID が無い）、同じ API ID が複数シートにあること、OpenAPI の `oneOf` / `anyOf` や循環参照は、レポートの冒頭に注記します。
+読み飛ばしたシート（API ID が無い）、OpenAPI の `oneOf` / `anyOf` や循環参照は、レポートの冒頭に注記します。
+
+同じ API ID のシートが 2 枚以上あるときは、**最初のシート**だけを比べ、警告 `duplicate_api_id`（どのシートかを列挙）を出します（新旧比較の `pair_by` の `duplicate_pair_key` と同じ扱い）。
+
+OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメーターが辞書でないなどの構造の誤り、ファイル内に無い `$ref` は、入力の誤り（終了コード 2）です。
 
 ## 3. 出力
 
