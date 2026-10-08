@@ -7,6 +7,7 @@
 ### Fixed（第 4 回）
 
 - `spec`: 桁（`max_length`）を表示形式どおりの文字列から読んでいたため、`#,##0` の 1000（表示「1,000」）や文字列の「1,000」が読めず、桁を黙って比べていなかった。セルの値（数値）で読み、文字列の桁区切り・全角も数値として読む。読めない桁は警告 `not_a_number` を出す
+- `spec`: OpenAPI の要求・応答の本体を `application/json` ちょうどのときしか読まず、`application/json; charset=utf-8`・`application/problem+json`・`*/*` の項目を比べていなかった。パラメーター付き・`*+json` も JSON として読み、`*/*` は JSON が無いときに使う
 
 ### Added
 

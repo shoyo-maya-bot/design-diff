@@ -102,6 +102,7 @@ API ID → method, path, request{項目名: type, required, max_length, location
     候補で型が違う項目（例: `anyOf: [string, integer]`）は型を比べません
   - `discriminator`: 候補の選び分けには使いません（`mapping` も読みません）。判別用の項目名を注記に添えるだけで、その項目自体は各候補の `properties` から読みます
   - 自分自身を参照するスキーマ（木構造など）は、2 回目に出てきたところで展開をやめ、注記します
+- 要求・応答の本体は JSON のメディアタイプから読みます: `application/json`（`; charset=utf-8` などパラメーター付き・大文字小文字を問わない）、`*+json`（`application/problem+json` など）、`*/*` の順に、最初にスキーマのあるもの。JSON の無い本体（`application/xml` だけなど）は比べません
 - パスは `{…}` の名前の違いと末尾の `/` を無視して比べます
 
 | category | 表示名 |
