@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import math
 import unicodedata
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
+from ..domain import spec_diff
 from . import excel_reader
 
 
@@ -83,7 +84,7 @@ def read_with_alerts(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[s
     stops = {conf[k]["label"] for k in ("api_id", "method", "path") if isinstance(conf.get(k), dict) and conf[k].get("label")}
     stops |= {conf[k]["title"] for k in ("request", "response", "statuses") if isinstance(conf.get(k), dict) and conf[k].get("title")}
     for ws in wb.worksheets:
-        if not fnmatch(ws.title, conf.get("sheets", "*")):
+        if not fnmatchcase(ws.title, conf.get("sheets", "*")):
             continue
         api_id = excel_reader.read_label(ws, conf["api_id"]["label"], _offset(conf["api_id"]))
         if not api_id:
@@ -126,12 +127,16 @@ def read_with_alerts(path: Path, conf: dict[str, Any]) -> tuple[dict[str, dict[s
                             "桁は比べていません",
                         )
                     )
-                entry[part][name] = {
-                    "type": type_map.get(raw_type, raw_type or None),
-                    "required": (row.get(cols.get("required", ""), "") in marks) if cols.get("required") else None,
-                    "max_length": max_length,
-                    "location": row.get(cols.get("location", ""), "") or ("body" if part == "request" else None),
-                }
+                spec_diff.add_field(  # 名前と位置で識別（path の id と body の id は別の項目）
+                    entry[part],
+                    name,
+                    {
+                        "type": type_map.get(raw_type, raw_type or None),
+                        "required": (row.get(cols.get("required", ""), "") in marks) if cols.get("required") else None,
+                        "max_length": max_length,
+                        "location": row.get(cols.get("location", ""), "") or ("body" if part == "request" else None),
+                    },
+                )
         st = conf.get("statuses")
         if st:
             ctx = excel_reader.ReadContext(stop_labels={excel_reader.norm_label(x) for x in stops})
