@@ -1,4 +1,4 @@
-"""採点で見つかった取りこぼしの回帰テスト.
+"""比較の取りこぼし（列・行・セルの見落とし、--all の扱いなど）の回帰テスト.
 
 - 同じ名前の列（「備考」が 2 列）の 2 列目も比べる
 - 表・文章の途中の空行で打ち切らない（空行より下の変更も出す）。打ち切ったら警告
@@ -283,7 +283,7 @@ def samples_dir(tmp_path: Path) -> Path:
     return tmp_path / "s"
 
 
-# --- 第 2 回: 読む範囲・pair_by の重複・1 セル行での打ち切り・global.yaml の相対パス・python -m ----------------
+# --- 読む範囲・pair_by の重複・1 セル行での打ち切り・global.yaml の相対パス・python -m ----------------
 
 
 def test_format_only_cells_far_away_are_not_scanned(tmp_path: Path):
