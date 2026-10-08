@@ -110,9 +110,11 @@ class ReadContext:
         else:
             self.covered.add((row, col))
 
-    def cover_rows(self, ws: Worksheet, first: int, last: int) -> None:
+    def cover_rows(self, ws: Worksheet, first: int, last: int, first_col: int = 1, last_col: int | None = None) -> None:
+        """行 first〜last の、列 first_col〜last_col（省略で値のある右端まで）のセルを読んだことにする."""
+        end = _sheet(ws).max_col if last_col is None else last_col
         for r in range(first, last + 1):
-            for c in range(1, _sheet(ws).max_col + 1):
+            for c in range(first_col, end + 1):
                 self.cover(ws, r, c)
 
 
@@ -496,10 +498,21 @@ def read_table(
         ctx.table_rows.append(r)
         last = r
         r += 1
-    ctx.cover_rows(ws, head_row, last)
+    # 表の列の範囲（見出しのある左端〜右端. 横に結合した見出しの右端まで）だけを読んだことにする.
+    # 同じ行でも範囲の外のセル（表の右の承認欄・メモなど）は「設定に無いセル」として比べる
+    named = [c for c, name in zip(width, names, strict=True) if name]
+    lo = min(named)
+    hi = max(max(_merge_end(ws, r, c) for r in range(head_row, head_row + depth)) for c in named)
+    ctx.cover_rows(ws, head_row, last, lo, hi)
     if gaps:
         ctx.notes.append(f"{ws.title}: 表「{where}」は空行（行 {_rows(gaps)}）を挟んで続く行も表として比べました")
     return [n for _, n in cols], rows
+
+
+def _merge_end(ws: Worksheet, row: int, col: int) -> int:
+    """セルを含む結合範囲の右端の列（結合していなければ col）."""
+    m = _merges(ws).get(row, col)
+    return m.c1 if m else col
 
 
 def _section_start(ws: Worksheet, r: int, ctx: ReadContext, header_set: set[str], *, after_blank: bool) -> str:
