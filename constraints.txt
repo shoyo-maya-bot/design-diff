@@ -10,7 +10,7 @@ pygments==2.21.0
 pytest==9.1.1
 pyyaml==6.0.3
 ruff==0.16.10
-tomli==2.4.1 ; python_full_version < '3.11'
+tomli==2.5.0 ; python_full_version < '3.11'
 typing-extensions==4.16.0 ; python_full_version < '3.11'
 
 # The following packages were excluded from the output:

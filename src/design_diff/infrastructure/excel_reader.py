@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import math
 import weakref
+import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +44,10 @@ from ..domain.model import text
 MAX_HEADER_ROWS = 3
 END_BLANK_ROWS = 2  # 表・文章の終わりとみなす連続した空行の数（既定）
 MAX_CELLS = 1_000_000  # 1 シートで読む値のあるセルの上限（超えた分の行は読まずに警告）
+
+
+class UnreadableBookError(Exception):
+    """Excel を開けない（壊れている・xlsx の形式でない）. 入力の誤りとして扱う（CLI は終了コード 2）."""
 
 
 @dataclass
@@ -88,6 +93,22 @@ def _formula_text(cell: Any) -> str | None:
     return text_attr if isinstance(text_attr, str) else str(v)
 
 
+def _open(openpyxl: Any, path: Path, *, data_only: bool) -> Any:
+    """openpyxl でブックを開く. 開けなければ UnreadableBookError（原因の例外は __cause__ に残す）.
+
+    壊れた・形式の違うファイルで openpyxl が出す例外は BadZipFile（zip でない）、InvalidFileException（拡張子）、
+    KeyError（xlsx に必要な部品が無い）、XML の構文エラーなどさまざまなので、MemoryError 以外はまとめて扱う.
+    """
+    try:
+        return openpyxl.load_workbook(path, data_only=data_only)
+    except MemoryError:
+        raise
+    except zipfile.BadZipFile as e:
+        raise UnreadableBookError(f"Excel を開けません（xlsx の形式ではないか、壊れています）: {path}") from e
+    except Exception as e:  # noqa: BLE001 — openpyxl が壊れたファイルで出す例外は種類が多い
+        raise UnreadableBookError(f"Excel を開けません（{type(e).__name__}: {e}）: {path}") from e
+
+
 def _load_with_formula_fallback(path: Path) -> tuple[Any, list[str]]:
     """devtools_common.excel.load_workbook_with_formula_fallback と同じ結果を、値のあるセルだけを見て作る.
 
@@ -97,8 +118,8 @@ def _load_with_formula_fallback(path: Path) -> tuple[Any, list[str]]:
     openpyxl = require_openpyxl()
     if not path.is_file():
         raise FileNotFoundError(f"Excel が見つかりません: {path}")
-    wb = openpyxl.load_workbook(path, data_only=True)
-    formulas = openpyxl.load_workbook(path)
+    wb = _open(openpyxl, path, data_only=True)
+    formulas = _open(openpyxl, path, data_only=False)
     missing: list[str] = []
     try:
         for fws in formulas.worksheets:
