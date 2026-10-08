@@ -40,18 +40,36 @@ LABELS = {**EXCEL_CATEGORIES, **SPEC_CATEGORIES}
 CONFIG_PROBLEMS = {"label_not_found", "table_not_found", "key_column_missing", "duplicate_key"}
 
 
+def _html(s: str) -> str:
+    """Markdown に入れる文字列の HTML（`&` `<` `>`）をエスケープする. セルの値の `<script>` や `<!--` を HTML として解釈させない."""
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _cell(s: str) -> str:
-    return s.replace("|", "\\|").replace("\n", "<br>")
+    """表のセル. HTML をエスケープし、`\\` と `|` をエスケープして（devtools_common.report と同じ）、改行は `<br>` にする."""
+    return _html(s).replace("\\", "\\\\").replace("|", "\\|").replace("\n", "<br>")
+
+
+def _line(s: str) -> str:
+    """表の外の 1 行（注意・注記・見出し）. HTML をエスケープし、改行は空白にする（引用の行が途切れないように）."""
+    return _html(s).replace("\r", " ").replace("\n", " ")
 
 
 def markdown(result: DiffResult) -> str:
-    lines = [f"# {result.title}", "", f"- 左: {result.left_label}", f"- 右: {result.right_label}", f"- 差分: {len(result.changes)} 件", ""]
+    lines = [
+        f"# {_line(result.title)}",
+        "",
+        f"- 左: {_line(result.left_label)}",
+        f"- 右: {_line(result.right_label)}",
+        f"- 差分: {len(result.changes)} 件",
+        "",
+    ]
     for w in result.warnings:
-        lines.append(f"> **注意**: {w}")
+        lines.append(f"> **注意**: {_line(w)}")
     for _, w in result.alerts:
-        lines.append(f"> **注意**: {w}")
+        lines.append(f"> **注意**: {_line(w)}")
     for n in result.notes:
-        lines.append(f"> {n}")
+        lines.append(f"> {_line(n)}")
     if result.notes or result.warnings or result.alerts:
         lines.append("")
     if not result.changes:

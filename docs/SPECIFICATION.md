@@ -124,6 +124,6 @@ OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメータ
 
 ## 3. 出力
 
-- Markdown: 種類ごとの件数の表と、種類ごとの「場所 / 項目 / 左 / 右」の表。左は変更前（または設計書）、右は変更後（または OpenAPI）
+- Markdown: 種類ごとの件数の表と、種類ごとの「場所 / 項目 / 左 / 右」の表。左は変更前（または設計書）、右は変更後（または OpenAPI）。セルの値・注意・注記の `&` `<` `>` は `&amp;` `&lt;` `&gt;` に、表のセルの `\` `|` は `\\` `\|` に、改行は `<br>` にします（値の HTML がそのまま解釈されたり、列がずれたりしないように）
 - JSON など: devtools-common の共通レポート形式。`rule_id` = category、`expected` = 左、`actual` = 右。
   設定の見直しが必要な差分は `error`、それ以外の差分と注意（`formula_cache_missing`）は `warning`、注記は `info`
