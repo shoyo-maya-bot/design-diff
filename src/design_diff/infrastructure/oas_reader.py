@@ -7,6 +7,9 @@
   null との oneOf / anyOf（null を許すだけの書き方）は、null でない方のスキーマとして読み、メモは出さない
 - discriminator: 候補の選び分けには使わない. 判別用の項目名をメモに添えるだけ（項目自体は各候補の properties から読む）
 - 自分自身を参照するスキーマ（木構造など）は、2 回目に出てきたところで展開をやめ、メモに出す
+- 項目は名前と受け渡し位置（path / query / header / body）で識別する（path の id と body の id は別の項目）
+- 同じ API ID（x-api-id → operationId）の操作が 2 つ以上あれば、最初の操作を使い、警告 duplicate_api_id を出す
+  （Excel の定義書で同じ API ID のシートがあるときと同じ扱い）
 """
 
 from __future__ import annotations
@@ -15,6 +18,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from ..domain.spec_diff import add_field
 
 METHODS = ("get", "post", "put", "patch", "delete")
 VARIANT_KEYS = ("oneOf", "anyOf")
@@ -201,7 +206,13 @@ class OpenApiError(ValueError):
 
 
 def read_with_notes(path: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """ApiSpec と、人が確認すべきこと（oneOf / anyOf・循環参照）のメモ.
+    """ApiSpec と、人が確認すべきこと（oneOf / anyOf・循環参照）のメモ. 読み方の警告も要るときは read_with_alerts."""
+    spec, notes, _ = read_with_alerts(path)
+    return spec, notes
+
+
+def read_with_alerts(path: Path) -> tuple[dict[str, dict[str, Any]], list[str], list[tuple[str, str]]]:
+    """ApiSpec・メモ・読み方の警告（rule_id, 文）. 警告は duplicate_api_id（同じ API ID の操作が 2 つ以上）.
 
     YAML の構文の誤りや、辞書であるべきところが辞書でないなどの構造の誤りは OpenApiError（ValueError）にする.
     """
@@ -214,7 +225,7 @@ def read_with_notes(path: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
     if not isinstance(doc, dict) or not isinstance(doc.get("paths"), dict):
         raise OpenApiError(f"OpenAPI の形式ではありません（paths がありません）: {path}")
     try:
-        return _read(doc)
+        return _read(doc, path.name)
     except OpenApiError:
         raise
     except (AttributeError, TypeError, KeyError, IndexError, ValueError) as e:
@@ -258,38 +269,58 @@ def json_schema(content: Any) -> Any:
     return None
 
 
-def _read(doc: dict) -> tuple[dict[str, dict[str, Any]], list[str]]:
+def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]], list[str], list[tuple[str, str]]]:
     spec: dict[str, dict[str, Any]] = {}
     notes: list[str] = []
+    ops_of: dict[str, list[str]] = {}
     for p, item in (doc.get("paths") or {}).items():
         common = item.get("parameters", [])
         for m in METHODS:
             op = item.get(m)
             if not op:
                 continue
-            api_id = op.get("x-api-id") or op.get("operationId") or f"{m.upper()} {p}"
+            api_id = str(op.get("x-api-id") or op.get("operationId") or f"{m.upper()} {p}")
+            ops_of.setdefault(api_id, []).append(f"{m.upper()} {p}")
+            if len(ops_of[api_id]) > 1:
+                continue  # 同じ API ID の 2 つ目からは読まない（最初の操作を使う）
             request: dict[str, dict[str, Any]] = {}
             for prm in [*common, *op.get("parameters", [])]:
                 prm = _resolve(doc, prm)
                 schema = _shape(doc, prm.get("schema", {}))
-                request[prm["name"]] = {
-                    "type": _type(doc, schema) if (schema.get("type") or schema.get("_variants")) else "string",
-                    "required": bool(prm.get("required", False)),
-                    "max_length": schema.get("maxLength"),
-                    "location": prm.get("in", "query"),
-                }
+                add_field(
+                    request,
+                    prm["name"],
+                    {
+                        "type": _type(doc, schema) if (schema.get("type") or schema.get("_variants")) else "string",
+                        "required": bool(prm.get("required", False)),
+                        "max_length": schema.get("maxLength"),
+                        "location": prm.get("in", "query"),
+                    },
+                )
             body = _resolve(doc, op.get("requestBody") or {})
             req_schema = json_schema(body.get("content"))
             if req_schema:
-                request.update(_props(doc, req_schema, "body", f"{api_id} request", notes))
+                for name, f in _props(doc, req_schema, "body", f"{api_id} request", notes).items():
+                    add_field(request, name, f)  # path パラメーターと同じ名前の body の項目も別の項目として持つ
             responses = op.get("responses") or {}
             ok = next((_resolve(doc, r) for code, r in responses.items() if str(code).startswith("2")), {})
             res_schema = json_schema(ok.get("content"))
-            spec[str(api_id)] = {
+            spec[api_id] = {
                 "method": m.upper(),
                 "path": p,
                 "request": request,
                 "response": _props(doc, res_schema, "body", f"{api_id} response", notes) if res_schema else {},
                 "statuses": sorted(str(c) for c in responses),
             }
-    return spec, list(dict.fromkeys(notes))
+    alerts: list[tuple[str, str]] = []
+    for api_id, ops in ops_of.items():
+        if len(ops) > 1:
+            listed = "・".join(f"「{o}」" for o in ops)
+            alerts.append(
+                (
+                    "duplicate_api_id",
+                    f"{source}: API ID「{api_id}」の操作が {len(ops)} 個あります（{listed}）。"
+                    f"最初の「{ops[0]}」だけを比べ、残りは比べていません。x-api-id / operationId を見直してください",
+                )
+            )
+    return spec, list(dict.fromkeys(notes)), alerts

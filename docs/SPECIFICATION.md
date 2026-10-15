@@ -38,7 +38,7 @@
   - 段数は結合セルから判断します（見出し行の結合セルが次の行まで縦に続き、その行が文字だけ、または横に結合した見出しの下の各列がすべて文字）。最大 3 段です。データ行まで同じように横結合しているだけの表や、結合の下が数値の表は 1 段です（doc-to-markdown と同じ規則。devtools-common の `header_depth`）
   - `header_rows`（1 以上の整数）で段数を指定できます。`header` には 1 段目の列名を書きます。`key` や `spec` の `columns` には「親/子」の列名を書きます
 - ラベルの照合では末尾の「:」「：」、空白、セル内改行を無視します
-- シートは `name`（ワイルドカード）で選び、新旧をシート名で対応付けます。`pair_by`（正規表現の 1 つ目のグループ）を書くと、その部分で対応付けます。
+- シートは `name`（ワイルドカード。大文字・小文字を区別し、OS によらず同じ）で選び、新旧をシート名で対応付けます。`pair_by`（正規表現の 1 つ目のグループ）を書くと、その部分で対応付けます。
   同じキーのシートが 2 枚以上あれば最初のシートだけを対応付け、警告 `duplicate_pair_key` を出します
 
 ### 差分の種類
@@ -88,7 +88,7 @@
 API ID → method, path, request{項目名: type, required, max_length, location}, response{…}, statuses[]
 ```
 
-- 設計書: `sheets` に合うシートを 1 API とし、`api_id` のラベルの値を API ID にします
+- 設計書: `sheets`（ワイルドカード。大文字・小文字を区別）に合うシートを 1 API とし、`api_id` のラベルの値を API ID にします
 - OpenAPI: `x-api-id` → `operationId` → `"METHOD path"` の順で API ID にします。
   path / query / header のパラメータと JSON の requestBody を request、最初の 2xx 応答の JSON を response とします。
   入れ子のオブジェクトは `親.子` の項目名に、配列は要素の項目にします。`$ref` はファイル内のものだけ解決します
@@ -119,6 +119,13 @@ API ID → method, path, request{項目名: type, required, max_length, location
 読み飛ばしたシート（API ID が無い）、OpenAPI の `oneOf` / `anyOf` や循環参照は、レポートの冒頭に注記します。
 
 同じ API ID のシートが 2 枚以上あるときは、**最初のシート**だけを比べ、警告 `duplicate_api_id`（どのシートかを列挙）を出します（新旧比較の `pair_by` の `duplicate_pair_key` と同じ扱い）。
+OpenAPI 側で同じ API ID（`x-api-id` → `operationId`）の操作が 2 つ以上あるときも、**最初の操作**（ファイルの出現順）だけを比べ、警告 `duplicate_api_id`（どの操作かを `METHOD path` で列挙）を出します。
+
+項目は**名前と受け渡し位置**（`location`: path / query / header / body）で識別します。
+
+- 同じ名前で位置が違う項目（path パラメーターの `id` と body の `id` など）は別の項目として読み、位置の同じもの同士を比べます。レポートの項目名は `id（path）` のように位置を添えます
+- 名前が両側で 1 つずつなら、位置が違っても同じ項目として対応付け、`location_mismatch` を出します
+- 同じ名前・同じ位置の項目が 2 つ以上あるときは、後のもので上書きします
 
 OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメーターが辞書でないなどの構造の誤り、ファイル内に無い `$ref` は、入力の誤り（終了コード 2）です。
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from fnmatch import fnmatch
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +29,11 @@ def validate_config(conf: dict[str, Any], where: str) -> None:
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に label がありません")
             if item["kind"] == "table" and not (item.get("header") and item.get("key")):
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に header と key が必要です")
+            if item["kind"] == "table" and not _is_column_list(item["key"]):
+                raise ValueError(
+                    f"{where}: sheets[{i}].items[{j}].key は列名の配列です（例: key: [項目名]）。"
+                    f"文字列 1 つ・数値・空の列名は書けません: {item['key']!r}"
+                )
             for opt, hint in (("header_rows", "（省略で自動判定）"), ("end_blank_rows", f"（省略で {excel_reader.END_BLANK_ROWS}）")):
                 v = item.get(opt)
                 if v is not None and (not isinstance(v, int) or isinstance(v, bool) or v < 1):
@@ -39,6 +44,11 @@ def validate_config(conf: dict[str, Any], where: str) -> None:
                     raise ValueError(f"{where}: sheets[{i}].pair_by にはグループ ( ) が 1 つ必要です")
             except re.error as e:
                 raise ValueError(f"{where}: sheets[{i}].pair_by の正規表現が不正です: {e}") from None
+
+
+def _is_column_list(v: Any) -> bool:
+    """key は空でない列名（文字列）の配列. 文字列のままだと 1 文字ずつの列名になるので誤りとする."""
+    return isinstance(v, list) and bool(v) and all(isinstance(c, str) and c.strip() for c in v)
 
 
 def run(conf: dict[str, Any], before: Path, after: Path, *, outside: str = "summary") -> DiffResult:
@@ -56,8 +66,8 @@ def run(conf: dict[str, Any], before: Path, after: Path, *, outside: str = "summ
     configured_a: set[str] = set()
     for sheet_conf in conf["sheets"]:
         pattern = sheet_conf.get("name", "*")
-        b_keys = _keyed([n for n in b_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"), before.name, result)
-        a_keys = _keyed([n for n in a_book.sheetnames if fnmatch(n, pattern)], sheet_conf.get("pair_by"), after.name, result)
+        b_keys = _keyed([n for n in b_book.sheetnames if fnmatchcase(n, pattern)], sheet_conf.get("pair_by"), before.name, result)
+        a_keys = _keyed([n for n in a_book.sheetnames if fnmatchcase(n, pattern)], sheet_conf.get("pair_by"), after.name, result)
         configured_b |= set(b_keys.values())
         configured_a |= set(a_keys.values())
         result.changes += [Change("sheet_removed", n) for k, n in b_keys.items() if k not in a_keys]
