@@ -136,13 +136,18 @@ def _fields(location: str, d: dict[str, dict[str, Any]], o: dict[str, dict[str, 
         df, of = d[dk], o[ok]
         name = _label(dk, df, d, o)
         for key, cat in (("type", "type_mismatch"), ("location", "location_mismatch")):
-            if df.get(key) and of.get(key) and df[key] != of[key]:
+            # 大文字・小文字と前後の空白は区別しない（String と string、Body と body は同じ）
+            if df.get(key) and of.get(key) and _fold(df[key]) != _fold(of[key]):
                 out.append(Change(cat, location, name, str(df[key]), str(of[key])))
         if df.get("required") is not None and of.get("required") is not None and bool(df["required"]) != bool(of["required"]):
             out.append(Change("required_mismatch", location, name, _yn(df["required"]), _yn(of["required"])))
         if df.get("max_length") and df.get("max_length") != of.get("max_length"):
             out.append(Change("length_mismatch", location, name, str(df["max_length"]), str(of.get("max_length") or "（指定なし）")))
     return out
+
+
+def _fold(v: Any) -> str:
+    return str(v).strip().casefold()
 
 
 def _norm_path(p: str) -> str:
