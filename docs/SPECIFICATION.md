@@ -7,7 +7,7 @@
 | kind | 読むもの | 設定 |
 |---|---|---|
 | `label` | ラベルのセルから `offset`（既定 `[0, 1]`）離れたセルの値 | `label`, `offset` |
-| `block` | ラベルから `offset`（既定 `[1, 0]`）の位置から下へ、文章の終わりまでの各行を改行でつないだ文章 | `label`, `offset`, `end_blank_rows` |
+| `block` | ラベルから `offset`（既定 `[1, 0]`）の位置から下へ、文章の終わりまでの各行を改行でつないだ文章（ラベルの直下の空行は飛ばし、注記する） | `label`, `offset`, `end_blank_rows` |
 | `table` | 見出し行（`header` の列名を含む行、または `title` のラベルの次の行）から、表の終わりまでの表 | `header`, `title`, `key`, `header_rows`, `end_blank_rows` |
 
 - **表・文章の終わり**: 途中の空行は飛ばして（文章では空の行として）読み、次のどれかで終わりとします
@@ -90,7 +90,9 @@ API ID → method, path, request{項目名: type, required, max_length, location
 
 - 設計書: `sheets`（ワイルドカード。大文字・小文字を区別）に合うシートを 1 API とし、`api_id` のラベルの値を API ID にします
 - OpenAPI: `x-api-id` → `operationId` → `"METHOD path"` の順で API ID にします。
-  path / query / header のパラメータと JSON の requestBody を request、最初の 2xx 応答の JSON を response とします。
+  操作は `get` `post` `put` `patch` `delete` `head` `options` `trace` を読みます。
+  path / query / header のパラメータと JSON の requestBody を request、2xx 応答のうち JSON のスキーマを持つ最初のもの（`200` → `201` → … → `2XX` の順。書いた順ではない）を response とします。
+  本文の無い `202` / `204` が先に書いてあっても、本文のある `200` で比べます。本文のある 2xx が複数あれば、どれで比べたかを注記します。
   入れ子のオブジェクトは `親.子` の項目名に、配列は要素の項目にします。`$ref` はファイル内のものだけ解決します
 - OpenAPI のスキーマの組み合わせは次のように読みます
   - `allOf`: 全部の `properties` と `required` をつないで 1 つのスキーマにします（`$ref` や入れ子の `allOf` も展開します）。
@@ -104,6 +106,7 @@ API ID → method, path, request{項目名: type, required, max_length, location
   - 自分自身を参照するスキーマ（木構造など）は、2 回目に出てきたところで展開をやめ、注記します
 - 要求・応答の本体は JSON のメディアタイプから読みます: `application/json`（`; charset=utf-8` などパラメーター付き・大文字小文字を問わない）、`*+json`（`application/problem+json` など）、`*/*` の順に、最初にスキーマのあるもの。JSON の無い本体（`application/xml` だけなど）は比べません
 - パスは `{…}` の名前の違いと末尾の `/` を無視して比べます
+- 型（`type`）と受け渡し位置（`location`）は大文字・小文字と前後の空白を区別せずに比べます（`String` と `string`、`Query` と `query` は同じ）
 
 | category | 表示名 |
 |---|---|

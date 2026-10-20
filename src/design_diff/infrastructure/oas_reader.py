@@ -21,7 +21,8 @@ import yaml
 
 from ..domain.spec_diff import add_field
 
-METHODS = ("get", "post", "put", "patch", "delete")
+# OpenAPI 3.x の Path Item に書ける操作すべて（head / options / trace も読む）
+METHODS = ("get", "post", "put", "patch", "delete", "head", "options", "trace")
 VARIANT_KEYS = ("oneOf", "anyOf")
 MAX_DEPTH = 20
 
@@ -269,6 +270,31 @@ def json_schema(content: Any) -> Any:
     return None
 
 
+def _success_code_key(code: str) -> tuple[int, str]:
+    """2xx の並び順: 200, 201, …（数の小さい順）、2XX（範囲指定）は最後."""
+    return (int(code), code) if code.isdigit() else (999, code)
+
+
+def _success_schema(doc: dict, responses: dict, api_id: str, notes: list[str]) -> Any:
+    """比べる応答のスキーマ. 2xx の中で、JSON のスキーマを持つ最初のもの（200 → 201 → … → 2XX の順）.
+
+    書いた順の最初の 2xx だけを見ると、本文の無い 202 / 204 が先にあるとき応答の項目が無いことになり、誤って差分になるため.
+    スキーマを持つ 2xx が複数あれば、どれで比べたかをメモに出す.
+    """
+    found: list[tuple[str, Any]] = []
+    for key in sorted((k for k in responses if str(k).startswith("2")), key=lambda k: _success_code_key(str(k))):
+        res = _resolve(doc, responses[key])
+        schema = json_schema(res.get("content")) if isinstance(res, dict) else None
+        if schema is not None:
+            found.append((str(key), schema))
+    if not found:
+        return None
+    if len(found) > 1:
+        others = "・".join(c for c, _ in found[1:])
+        notes.append(f"OpenAPI の {api_id} は本文のある成功応答が複数あります。応答の項目は {found[0][0]} で比べました（他: {others}）")
+    return found[0][1]
+
+
 def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]], list[str], list[tuple[str, str]]]:
     spec: dict[str, dict[str, Any]] = {}
     notes: list[str] = []
@@ -303,8 +329,7 @@ def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]]
                 for name, f in _props(doc, req_schema, "body", f"{api_id} request", notes).items():
                     add_field(request, name, f)  # path パラメーターと同じ名前の body の項目も別の項目として持つ
             responses = op.get("responses") or {}
-            ok = next((_resolve(doc, r) for code, r in responses.items() if str(code).startswith("2")), {})
-            res_schema = json_schema(ok.get("content"))
+            res_schema = _success_schema(doc, responses, api_id, notes)
             spec[api_id] = {
                 "method": m.upper(),
                 "path": p,

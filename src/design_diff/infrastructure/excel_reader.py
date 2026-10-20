@@ -350,8 +350,8 @@ def _starts_label(ws: Worksheet, r: int, ctx: ReadContext) -> bool:
 def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0), ctx: ReadContext | None = None) -> str | None:
     """ラベルの下に続く行を改行でつないだ文章.
 
-    途中の空行は空の行として含める. 連続した空行が end_blank_rows 行続くか、
-    設定にある別のラベルの行、空行の後で他の列にも値がある行（表の始まり）で終わる.
+    途中の空行は空の行として含める. ラベルの直下の空行（end_blank_rows 行未満）は飛ばす.
+    連続した空行が end_blank_rows 行続くか、設定にある別のラベルの行、空行の後で他の列にも値がある行（表の始まり）で終わる.
     """
     ctx = ctx if ctx is not None else ReadContext()
     pos = find_label(ws, label)
@@ -362,6 +362,7 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0), ctx:
     lines: list[str] = []
     blank = 0
     gaps: list[int] = []
+    leading: list[int] = []
     while r <= _sheet(ws).max_row:
         v = _merged_value(ws, r, c)
         if not v:
@@ -370,17 +371,21 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0), ctx:
                 break
             r += 1
             continue
-        if _starts_label(ws, r, ctx) and lines:
+        if _starts_label(ws, r, ctx) and (lines or blank):
             break
-        if blank and (not lines or any(col != c for col, _ in _row_cells(ws, r))):
+        if blank and any(col != c for col, _ in _row_cells(ws, r)):
             break  # 空行の後に別の列の値がある行 = 次の表・節
-        if blank:
+        if blank and lines:
             gaps += list(range(r - blank, r))
             lines += [""] * blank
+        elif blank:
+            leading = list(range(r - blank, r))  # ラベルの直下の空行は飛ばす（文章に入れない）
         blank = 0
         lines.append(v)
         ctx.cover(ws, r, c)
         r += 1
+    if leading:
+        ctx.notes.append(f"{ws.title}: 文章「{label}」はラベルの直下の空行（行 {_rows(leading)}）を飛ばして読みました")
     if gaps:
         ctx.notes.append(f"{ws.title}: 文章「{label}」は空行（行 {_rows(gaps)}）を挟んで続く行も含めて比べました")
     return "\n".join(lines)
