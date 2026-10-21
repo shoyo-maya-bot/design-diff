@@ -6,8 +6,8 @@
 
 | kind | 読むもの | 設定 |
 |---|---|---|
-| `label` | ラベルのセルから `offset`（既定 `[0, 1]`）離れたセルの値 | `label`, `offset` |
-| `block` | ラベルから `offset`（既定 `[1, 0]`）の位置から下へ、文章の終わりまでの各行を改行でつないだ文章（ラベルの直下の空行は飛ばし、注記する） | `label`, `offset`, `end_blank_rows` |
+| `label` | ラベルのセルから `offset`（既定 `[0, 1]`）離れたセルの値。ラベルが結合セルなら、右・下へは結合範囲の端から数える（2 列に結合したラベルの `[0, 1]` は結合の右隣） | `label`, `offset` |
+| `block` | ラベルから `offset`（既定 `[1, 0]`。結合したラベルは結合範囲の下端から数える）の位置から下へ、文章の終わりまでの各行を改行でつないだ文章（ラベルの直下の空行は飛ばし、注記する） | `label`, `offset`, `end_blank_rows` |
 | `table` | 見出し行（`header` の列名を含む行、または `title` のラベルの次の行）から、表の終わりまでの表 | `header`, `title`, `key`, `header_rows`, `end_blank_rows` |
 
 - **表・文章の終わり**: 途中の空行は飛ばして（文章では空の行として）読み、次のどれかで終わりとします
@@ -93,7 +93,10 @@ API ID → method, path, request{項目名: type, required, max_length, location
   操作は `get` `post` `put` `patch` `delete` `head` `options` `trace` を読みます。
   path / query / header のパラメータと JSON の requestBody を request、2xx 応答のうち JSON のスキーマを持つ最初のもの（`200` → `201` → … → `2XX` の順。書いた順ではない）を response とします。
   本文の無い `202` / `204` が先に書いてあっても、本文のある `200` で比べます。本文のある 2xx が複数あれば、どれで比べたかを注記します。
-  入れ子のオブジェクトは `親.子` の項目名に、配列は要素の項目にします。`$ref` はファイル内のものだけ解決します
+  入れ子のオブジェクトは `親.子` の項目名にします。応答・要求の本体そのものが配列なら要素の項目を読みます。
+  項目が object の配列なら、配列の項目（型 `array`）と要素の項目を `親.子` で持ちます（`orders: [{id}]` → `orders` と `orders.id`。配列の配列も同じ）。
+  文字列などの配列は要素の項目を作らず、配列の項目の桁に要素の `maxLength` を使います。`$ref` はファイル内のものだけ解決します
+- 応答ステータスは `responses` のキー（`200`・`404` など）です。`default` は特定のステータスではないので比べず、あることを注記します
 - OpenAPI のスキーマの組み合わせは次のように読みます
   - `allOf`: 全部の `properties` と `required` をつないで 1 つのスキーマにします（`$ref` や入れ子の `allOf` も展開します）。
     親の `required` は `allOf` の中で定義された項目にも効きます
@@ -131,9 +134,13 @@ OpenAPI 側で同じ API ID（`x-api-id` → `operationId`）の操作が 2 つ�
 - 同じ名前・同じ位置の項目が 2 つ以上あるときは、後のもので上書きします
 
 OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメーターが辞書でないなどの構造の誤り、ファイル内に無い `$ref` は、入力の誤り（終了コード 2）です。
+`spec` の設定（`config/spec.yaml`）は読み始める前に形を確かめ、`api_id`・`method`・`path` の `label` が無い、`offset` が整数 2 つでない、
+`request`・`response` に `columns.name` が無い、`statuses` に `column` が無い、`type_map` が辞書でないなどは設定の誤り（終了コード 2。どの項目かを表示）です。
+それ以外の想定外の例外は、設定や入力の誤りとはみなさず内部エラー（終了コード 3）にします。
 
 ## 3. 出力
 
 - Markdown: 種類ごとの件数の表と、種類ごとの「場所 / 項目 / 左 / 右」の表。左は変更前（または設計書）、右は変更後（または OpenAPI）。セルの値・注意・注記の `&` `<` `>` は `&amp;` `&lt;` `&gt;` に、表のセルの `\` `|` は `\\` `\|` に、改行は `<br>` にします（値の HTML がそのまま解釈されたり、列がずれたりしないように）
 - JSON など: devtools-common の共通レポート形式。`rule_id` = category、`expected` = 左、`actual` = 右。
   設定の見直しが必要な差分は `error`、それ以外の差分と注意（`formula_cache_missing`）は `warning`、注記は `info`
+- `excel --all` の一覧: ペアごとに `pair_compared`（`info`。差分の件数と出力先）、ファイルが無い `pair_missing`・読めない `pair_failed`（`error`）

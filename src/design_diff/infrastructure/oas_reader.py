@@ -8,6 +8,8 @@
 - discriminator: 候補の選び分けには使わない. 判別用の項目名をメモに添えるだけ（項目自体は各候補の properties から読む）
 - 自分自身を参照するスキーマ（木構造など）は、2 回目に出てきたところで展開をやめ、メモに出す
 - 項目は名前と受け渡し位置（path / query / header / body）で識別する（path の id と body の id は別の項目）
+- object の配列は要素の項目を「親.子」で持つ（orders: [{id}] → orders と orders.id）. 文字列などの配列は要素の項目を作らない
+- 応答ステータスの default は比べない（特定のステータスではない）. default があることはメモに出す
 - 同じ API ID（x-api-id → operationId）の操作が 2 つ以上あれば、最初の操作を使い、警告 duplicate_api_id を出す
   （Excel の定義書で同じ API ID のシートがあるときと同じ扱い）
 """
@@ -195,7 +197,21 @@ def _props(
             out[key]["variant"] = f["variant"]
         if prop.get("type") == "object" or prop.get("properties") or (prop.get("_variants") and t != "array"):
             out.update(_props(doc, f["schema"], location, label, notes, f"{key}.", seen, depth + 1))
+        elif t == "array" and _items_are_objects(doc, prop):
+            # object の配列は、要素の項目を「親.子」で持つ（orders: [{id}] → orders.id）. 配列の配列も同じ
+            out.update(_props(doc, f["schema"], location, label, notes, f"{key}.", seen, depth + 1))
     return out
+
+
+def _items_are_objects(doc: dict, shape: dict[str, Any]) -> bool:
+    """配列の要素（配列の配列ならその奥の要素）が、項目を持つ object か."""
+    for _ in range(MAX_DEPTH):
+        items = _shape(doc, shape.get("items"))
+        if items.get("type") == "array" or isinstance(items.get("items"), dict):
+            shape = items
+            continue
+        return bool(items.get("type") == "object" or items.get("properties") or items.get("_variants"))
+    return False
 
 
 def read(path: Path) -> dict[str, dict[str, Any]]:
@@ -329,13 +345,15 @@ def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]]
                 for name, f in _props(doc, req_schema, "body", f"{api_id} request", notes).items():
                     add_field(request, name, f)  # path パラメーターと同じ名前の body の項目も別の項目として持つ
             responses = op.get("responses") or {}
+            if "default" in responses:
+                notes.append(f"OpenAPI の {api_id} の default 応答は特定のステータスではないため、設計書の応答ステータスとは比べていません")
             res_schema = _success_schema(doc, responses, api_id, notes)
             spec[api_id] = {
                 "method": m.upper(),
                 "path": p,
                 "request": request,
                 "response": _props(doc, res_schema, "body", f"{api_id} response", notes) if res_schema else {},
-                "statuses": sorted(str(c) for c in responses),
+                "statuses": sorted(str(c) for c in responses if str(c) != "default"),
             }
     alerts: list[tuple[str, str]] = []
     for api_id, ops in ops_of.items():
