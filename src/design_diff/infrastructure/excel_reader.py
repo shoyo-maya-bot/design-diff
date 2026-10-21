@@ -317,12 +317,27 @@ def find_label(ws: Worksheet, label: str) -> tuple[int, int] | None:
     return None
 
 
+def _beside(ws: Worksheet, pos: tuple[int, int], offset: tuple[int, int]) -> tuple[int, int]:
+    """ラベルのセルから offset（行, 列）離れたセル. ラベルが結合されていれば、右・下へは結合範囲の端から数える.
+
+    （横に結合したラベルの右隣 [0, 1] が結合の中のセル = ラベル自身にならないように）
+    """
+    r, c = pos
+    m = _merges(ws).get(r, c)
+    if m is not None:
+        if offset[0] > 0:
+            r = m.r1
+        if offset[1] > 0:
+            c = m.c1
+    return r + offset[0], c + offset[1]
+
+
 def read_label(ws: Worksheet, label: str, offset: tuple[int, int] = (0, 1), ctx: ReadContext | None = None) -> str | None:
-    """ラベルのセルから offset（行, 列）離れたセルの値. ラベルが無ければ None."""
+    """ラベルのセルから offset（行, 列）離れたセルの値. ラベルが無ければ None. 結合したラベルは結合範囲の端から数える."""
     pos = find_label(ws, label)
     if pos is None:
         return None
-    r, c = pos[0] + offset[0], pos[1] + offset[1]
+    r, c = _beside(ws, pos, offset)
     if ctx is not None:
         ctx.cover(ws, *pos)
         if r >= 1 and c >= 1:
@@ -358,7 +373,7 @@ def read_block(ws: Worksheet, label: str, offset: tuple[int, int] = (1, 0), ctx:
     if pos is None:
         return None
     ctx.cover(ws, *pos)
-    r, c = pos[0] + offset[0], pos[1] + offset[1]
+    r, c = _beside(ws, pos, offset)
     lines: list[str] = []
     blank = 0
     gaps: list[int] = []

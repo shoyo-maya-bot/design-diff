@@ -27,6 +27,46 @@ from ..domain import spec_diff
 from . import excel_reader
 
 
+class SpecConfigError(ValueError):
+    """整合チェックの設定（config/spec.yaml）の誤り. CLI は終了コード 2."""
+
+
+def validate_config(conf: Any, name: str = "spec.yaml") -> None:
+    """設定の形を、読み始める前に確かめる. 誤りは SpecConfigError（どの項目かを添える）.
+
+    読み取りの途中の KeyError などを「設定の誤り」とみなして終了コード 2 にすると、ツールの不具合（本来は 3）まで
+    隠れてしまうため、設定の誤りはここで先に見つける.
+    """
+
+    def bad(msg: str) -> SpecConfigError:
+        return SpecConfigError(f"{name}: {msg}")
+
+    if not isinstance(conf, dict):
+        raise bad("設定は「項目: 値」の辞書で書きます")
+    if not isinstance(conf.get("sheets", "*"), str):
+        raise bad('sheets はシート名のパターン（文字列）で書きます（例: "API*"）')
+    for key in ("api_id", "method", "path"):
+        item = conf.get(key)
+        if not isinstance(item, dict) or not item.get("label"):
+            raise bad(f"{key} は {{label: ラベル}} で書きます（例: {key}: {{label: API ID}}）")
+        o = item.get("offset", [0, 1])
+        if not (isinstance(o, list) and len(o) == 2 and all(isinstance(x, int) and not isinstance(x, bool) for x in o)):
+            raise bad(f"{key} の offset は [行, 列] の整数 2 つで書きます（例: [0, 1]）")
+    for key in ("request", "response"):
+        part = conf.get(key)
+        if part is None:
+            continue
+        if not isinstance(part, dict) or not isinstance(part.get("columns"), dict) or not part["columns"].get("name"):
+            raise bad(f"{key} は {{title: 表題, columns: {{name: 項目名の列, ...}}}} で書きます（columns.name が必要）")
+    st = conf.get("statuses")
+    if st is not None and (not isinstance(st, dict) or not st.get("column")):
+        raise bad("statuses は {title: 表題, column: ステータスの列} で書きます（column が必要）")
+    if not isinstance(conf.get("type_map", {}), dict):
+        raise bad("type_map は {設計書の型: OpenAPI の型} の辞書で書きます")
+    if not isinstance(conf.get("required_marks", []), list):
+        raise bad('required_marks は必須を表す印の並び（例: ["○", "必須"]）で書きます')
+
+
 def _offset(conf: dict) -> tuple[int, int]:
     o = conf.get("offset", [0, 1])
     return int(o[0]), int(o[1])

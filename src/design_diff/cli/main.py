@@ -26,6 +26,8 @@ from devtools_common.report import Finding, Severity
 from .. import __version__
 from ..application import excel_diff, render, spec_diff
 from ..infrastructure.excel_reader import UnreadableBookError
+from ..infrastructure.excel_spec_reader import SpecConfigError, validate_config
+from ..infrastructure.oas_reader import OpenApiError
 
 TOOL = "design-diff"
 EXTENSIONS = {"markdown": ".md", "json": ".json", "html": ".html", "csv": ".csv"}
@@ -207,16 +209,21 @@ def cmd_excel(args) -> int:
 
 
 def cmd_spec(args) -> int:
-    conf = _config(args.config or args.config_dir / "spec.yaml")
+    conf_path = args.config or args.config_dir / "spec.yaml"
+    conf = _config(conf_path)
+    try:
+        validate_config(conf, conf_path.name)
+    except SpecConfigError as e:
+        raise common_cli.UsageError(str(e)) from None
     for f in (args.excel, args.oas):
         if not f.is_file():
             raise common_cli.UsageError(f"見つかりません: {f}")
     try:
         result = spec_diff.run(conf, args.excel, args.oas)
-    except UnreadableBookError as e:
+    except (UnreadableBookError, OpenApiError) as e:
+        # 入力の誤り（壊れた Excel・OpenAPI の構文や構造の誤り）だけを 2 にする. それ以外の KeyError・ValueError は
+        # ツールの不具合なので握らず、終了コード 3（内部エラー）にする
         raise common_cli.UsageError(str(e)) from None
-    except (KeyError, ValueError) as e:
-        raise common_cli.UsageError(f"設定または OpenAPI の誤り: {e}") from None
     common_cli.write_output(render.render(result, args.format, TOOL, __version__), args.output)
     return _exit(result, args.fail_on_diff)
 
