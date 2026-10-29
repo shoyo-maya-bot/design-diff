@@ -8,7 +8,6 @@ import re
 from pathlib import Path
 
 import pytest
-import tomllib
 from devtools_common.cli import run_main
 from openpyxl import Workbook
 
@@ -189,15 +188,15 @@ def test_parameters_not_a_list_is_input_error(tmp_path: Path):
 
 
 def test_readme_python_version_matches_pyproject_and_ci():
-    meta = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    need = re.fullmatch(r">=(\d+\.\d+)", meta["project"]["requires-python"]).group(1)
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")  # tomllib は 3.11 から. 3.10 でも動くよう正規表現で読む
+    need = re.search(r'^requires-python = ">=(\d+\.\d+)"$', pyproject, re.M).group(1)
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     assert f"Python {need} 以上" in readme
     assert f"(3, {need.split('.')[1]})" in (ROOT / "setup.sh").read_text(encoding="utf-8")
     assert f"Python {need} 以上" in (ROOT / "setup.cmd").read_bytes().decode("cp932")
     ci = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert f'"{need}"' in ci  # 最低の版を CI で確かめている
-    assert meta["tool"]["ruff"]["target-version"] == "py" + need.replace(".", "")
+    assert f'target-version = "py{need.replace(".", "")}"' in pyproject
 
 
 def test_every_cli_option_is_in_readme_and_has_help():
