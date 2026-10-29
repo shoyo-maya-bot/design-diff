@@ -31,6 +31,7 @@ from ..infrastructure.oas_reader import OpenApiError
 
 TOOL = "design-diff"
 EXTENSIONS = {"markdown": ".md", "json": ".json", "html": ".html", "csv": ".csv"}
+FAIL_ON_DIFF_HELP = "差分が 1 件でもあれば終了コード 1（CI で「変更なし」を確かめるとき）"
 CONFIG_DIR_HELP = "設定ファイルの置き場（既定: config/）。サブコマンドの前後どちらに書いてもよい"
 
 
@@ -47,8 +48,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     e = sub.add_parser("excel", help="Excel 設計書の新旧差分")
     e.add_argument("--type", help="設定の種類（config/<type>.yaml）。例: api / batch / if")
-    e.add_argument("--before", type=Path)
-    e.add_argument("--after", type=Path)
+    e.add_argument("--before", type=Path, help="変更前の Excel（--type と --after と一緒に）")
+    e.add_argument("--after", type=Path, help="変更後の Excel")
     e.add_argument(
         "--all",
         action="store_true",
@@ -60,15 +61,15 @@ def build_parser() -> argparse.ArgumentParser:
         default="summary",
         help="設定に無いセル（承認者欄など）の変更: summary=シートごとに件数と場所（既定）/ all=1 セルずつ / off=比べない",
     )
-    e.add_argument("--fail-on-diff", action="store_true")
+    e.add_argument("--fail-on-diff", action="store_true", help=FAIL_ON_DIFF_HELP)
     _add_config_dir(e, top=False)
     common_cli.add_common_args(e)
 
     s = sub.add_parser("spec", help="API 定義書（Excel）と OpenAPI の差分")
-    s.add_argument("--excel", type=Path, required=True)
-    s.add_argument("--oas", type=Path, required=True)
-    s.add_argument("--config", type=Path, help="既定: config/spec.yaml")
-    s.add_argument("--fail-on-diff", action="store_true")
+    s.add_argument("--excel", type=Path, required=True, help="API 定義書（Excel）")
+    s.add_argument("--oas", type=Path, required=True, help="OpenAPI（YAML / JSON）")
+    s.add_argument("--config", type=Path, help="整合チェックの設定（既定: <config-dir>/spec.yaml）")
+    s.add_argument("--fail-on-diff", action="store_true", help=FAIL_ON_DIFF_HELP)
     _add_config_dir(s, top=False)
     common_cli.add_common_args(s)
     return p
@@ -77,7 +78,10 @@ def build_parser() -> argparse.ArgumentParser:
 def _config(path: Path) -> dict:
     if not path.is_file():
         raise common_cli.UsageError(f"設定ファイルが見つかりません: {path}")
-    return load_structured(path) or {}
+    conf = load_structured(path) or {}
+    if not isinstance(conf, dict):
+        raise common_cli.UsageError(f"設定ファイルはキーと値で書きます（{type(conf).__name__} になっています）: {path}")
+    return conf
 
 
 def _exit(result, fail_on_diff: bool) -> int:
@@ -128,10 +132,15 @@ def cmd_all(args) -> int:
     g = _config(g_path)
     base = g_path.resolve().parent
     pairs = g.get("pairs") or []
+    if not isinstance(pairs, list):
+        raise common_cli.UsageError("global.yaml: pairs は配列で書きます（- type: … / before: … / after: …）")
     confs: dict[str, dict] = {}
     for i, pair in enumerate(pairs):  # 設定の誤りは比べ始める前にまとめて止める（終了コード 2）
         if not isinstance(pair, dict) or not all(pair.get(k) for k in ("type", "before", "after")):
             raise common_cli.UsageError(f"global.yaml: pairs[{i}] に type・before・after が必要です")
+        bad = [k for k in ("type", "before", "after") if not isinstance(pair[k], str)]
+        if bad:
+            raise common_cli.UsageError(f"global.yaml: pairs[{i}] の {'・'.join(bad)} は文字列です（type は config/<type>.yaml の <type>）")
         if pair["type"] not in confs:
             conf = _config(args.config_dir / f"{pair['type']}.yaml")
             try:

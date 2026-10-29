@@ -12,6 +12,8 @@ Excel のどこを読むか（ラベル・表・キー列）はコードでは�
 
 ## すぐ使う
 
+必要なもの: Python 3.10 以上（`pyproject.toml` の `requires-python`）、Git（依存の devtools-common を GitHub から入れる）
+
 1. clone する
 2. **Windows**: `setup.cmd` をダブルクリック ／ **macOS・Linux**: `./setup.sh`
 3. `.venv` を有効にしてサンプルで試す
@@ -44,12 +46,17 @@ python -m design_diff excel --all            # design-diff コマンドが PATH 
 
 | オプション | 意味 |
 |---|---|
-| `-f markdown｜json｜…` | 出力形式（既定 Markdown。JSON は devtools 共通のレポート形式）。`--all` ではペアごとのファイルもこの形式（拡張子 `.md` / `.json` …） |
+| `excel --type 種類 --before 旧 --after 新` | 1 組を比べる（設定は `<config-dir>/<種類>.yaml`） |
+| `excel --all` | `<config-dir>/global.yaml` の `pairs` をまとめて比べ、`output_dir` に書き出す |
+| `spec --excel FILE --oas FILE` | API 定義書と OpenAPI を比べる（両方必須） |
+| `-f markdown｜html｜csv｜json` | 出力形式（既定 `markdown`。JSON などは devtools 共通のレポート形式）。`--all` ではペアごとのファイルもこの形式（拡張子 `.md` / `.html` / `.csv` / `.json`） |
 | `-o FILE` | ファイルに書き出す。`--all` では一覧（ペアごとの差分の件数と出力先）を書く |
 | `--fail-on-diff` | 差分があれば終了コード 1（CI で「変更なし」を確かめるとき） |
 | `--config-dir DIR` | 設定の置き場（既定 `config/`）。サブコマンドの前でも後でも書ける |
 | `excel --outside summary｜all｜off` | 設定に無いセル（承認者欄など）の変更の出し方。既定 `summary` はシートごとに件数と場所、`all` は 1 セルずつ、`off` は比べない |
-| `spec --config FILE` | 整合チェックの設定（既定 `config/spec.yaml`） |
+| `spec --config FILE` | 整合チェックの設定（既定 `<config-dir>/spec.yaml`） |
+| `--log-level DEBUG｜INFO｜WARNING｜ERROR` | ログの量（ログは標準エラーへ）。サブコマンドの後に書く |
+| `--version` | 版を出して終わる |
 
 ### 終了コード
 
@@ -57,7 +64,7 @@ python -m design_diff excel --all            # design-diff コマンドが PATH 
 |---|---|---|
 | `0` | 正常 | 比べ終えた（`--fail-on-diff` なしなら差分の有無は問わない） |
 | `1` | **差分あり・要確認** | `--fail-on-diff` で差分があった／「設定の見直しが必要」な差分（`label_not_found` など）があった／`--all` で比べられなかったペア（`pair_missing` / `pair_failed`）があった |
-| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by`・表の `key` が列名の配列でないなど）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない・展開すると大きすぎる）、`spec` の OpenAPI の構文（YAML / JSON）・構造の誤り、`spec` の設定の誤り（`api_id` などの `label` が無い・`columns.name` が無いなど） |
+| `2` | **入力・使い方の誤り** | 引数の誤り、設定ファイルが無い・誤り（`kind`・`pair_by`・表の `key` が列名の配列でないなど）、`--before` / `--after` / `--excel` / `--oas` のファイルが無い、Excel を開けない（壊れている・xlsx の形式でない・展開すると大きすぎる）、`spec` の OpenAPI の構文（YAML / JSON）・構造の誤り、`spec` の設定の誤り（`api_id` などの `label` が無い・`columns.name` が無いなど）、`excel` の設定の形の誤り（`sheets` の要素・`items` の要素が辞書でない、`offset` が整数 2 つでない、`label`・`header` が文字列でない、`global.yaml` の `pairs[i].type` が文字列でないなど） |
 | `3` | **内部エラー** | 上のどれでもない想定外の例外（`--log-level DEBUG` で詳細） |
 
 CI では「`0` 以外は止める」、差分だけを見るなら「`1` は差分、`2` と `3` は実行の失敗」と区別できます。
@@ -92,7 +99,8 @@ sheets:
 - 結合セルは左上の値として読みます。ラベルの末尾の「：」や空白の違いは無視します
 - セルの値は**表示形式どおりの文字列**で比べます（例: 表示形式 `000` の数値 1 は `001`、`#,##0` の 1500 は `1,500`、`yyyy/mm/dd` の日付は `2026/04/05`）。文字列で入力した `001` と、表示形式でゼロ埋めした数値 1 は同じ値とみなします。値が同じでも表示形式を変えて見た目が変わったセルは差分になります
 - 数式セルは計算結果で比べます。ツールで作った Excel など計算結果が保存されていないときは数式の文字列で比べ、レポートに**注意**を出します（Excel で開いて保存し直すと計算結果で比べられます）
-- 「設定の見直しが必要」と出たら、ラベル名か `key` の列名が設計書と合っていません
+- 「設定の見直しが必要」と出たら、ラベル名・表の `title` / `header`、または `key` の列名が設計書と合っていません（新旧の**どちらにも**見つからないとき）。
+  片方にだけある表・ラベルは、改訂で足した・消したものとして「追加された表」「削除された表」（`table_added` / `table_removed`）、`label_added` / `label_removed` に出します
 - `pair_by` のキーが同じシートが 2 枚以上あると、最初のシートだけを対応付けて比べ、警告 `duplicate_pair_key` を出します
 - 表のキー列が空の行は対応付けられないので比べず、警告 `blank_key`（件数と行番号）を出します
 - 表の `key` は列名の配列で書きます（`key: [項目名]`）。`key: 項目名` のような文字列は設定の誤り（終了コード 2）です

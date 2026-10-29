@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+### Fixed（第 8 回）
+
+- `excel`: 設定の `offset` が整数 2 つでない、`sheets` / `items` の要素が辞書でない、`name`・`label`・`title`・`header`・`pair_by` が文字列でない、設定ファイルがキーと値でない、を確かめず、読み始めてから内部エラー（終了コード 3）になっていた。比べる前に確かめて設定の誤り（終了コード 2。どの項目かを表示）にする
+- `excel`: 改訂で表を消した（または足した）とき `table_not_found`（設定の見直しが必要）として終了コード 1 になっていた。片方にだけある表は `table_removed` / `table_added`（差分。`--fail-on-diff` なしなら 0）にし、`table_not_found` は新旧の**どちらにも**無いときだけにする
+- `excel --all`: `global.yaml` の `pairs[i].type`（`before`・`after`）が文字列でない、`pairs` が配列でないと TypeError で終了コード 3 になっていた。設定の誤り（終了コード 2）にする
+- `spec`: パス共通の `parameters` と操作の `parameters` の合わせ方を明示した（同じ `name`・`in` は操作のもので上書き、header の名前は大文字・小文字を区別しない）。Path Item 自体の `$ref` を読んでいなかった（その下の操作が比べられなかった）。`parameters` が配列でないときは入力の誤り（終了コード 2）
+
+### Changed（第 8 回）
+
+- README: 必要なもの（Python 3.10 以上・Git）を書いた。オプションの表に `--type`/`--before`/`--after`・`--all`・`--excel`/`--oas`・`--log-level`・`--version` を足し、`-f` の選択肢を実際（markdown / html / csv / json）に合わせた。終了コード 2 の例に `excel` の設定の形の誤りを足した
+- `--help`: `--before`・`--after`・`--fail-on-diff`・`--excel`・`--oas` に説明を付けた
+- `setup.sh`: Git Bash（`.venv/Scripts`）で動かなかった。Python の版も確かめる。`setup.cmd` の案内の版（3.12）を `requires-python` の 3.10 以上に合わせた
+- `tests/test_round8.py`: README の Python の版と `pyproject.toml`・CI・setup の一致、CLI の全オプションが README にあり `--help` に説明があること、を確かめる
+
 ### Fixed（第 7 回）
 
 - `spec`: OpenAPI の object の配列（`orders: [{id}]`）の要素の項目を展開していなかったため、設計書の `orders.id` を「OpenAPI に無い項目」と誤検出していた。要素の項目を `親.子` で持つ（配列の配列も同じ。仕様書の「配列は要素の項目にします」に合わせた）

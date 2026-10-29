@@ -17,16 +17,36 @@ OUTSIDE_SHOWN = 10  # summary で場所を並べる数
 
 
 def validate_config(conf: dict[str, Any], where: str) -> None:
+    """比べる前に設定の形を確かめる. 誤りは ValueError（CLI は終了コード 2）. 読み始めてから TypeError（終了コード 3）にしない."""
+    if not isinstance(conf, dict):
+        raise ValueError(f"{where}: 設定はキーと値（sheets: …）で書きます")
     if not isinstance(conf.get("sheets"), list) or not conf["sheets"]:
         raise ValueError(f"{where}: sheets（シートごとの比較設定）が必要です")
     for i, s in enumerate(conf["sheets"]):
+        if not isinstance(s, dict):
+            raise ValueError(f"{where}: sheets[{i}] はキーと値（name・items など）で書きます: {s!r}")
+        for opt in ("name", "pair_by"):
+            if s.get(opt) is not None and not isinstance(s[opt], str):
+                raise ValueError(f"{where}: sheets[{i}].{opt} は文字列です: {s[opt]!r}")
+        if s.get("items") is not None and not isinstance(s["items"], list):
+            raise ValueError(f"{where}: sheets[{i}].items は項目の配列です")
         for j, item in enumerate(s.get("items") or []):
+            if not isinstance(item, dict):
+                raise ValueError(f"{where}: sheets[{i}].items[{j}] はキーと値（kind・name など）で書きます: {item!r}")
             if item.get("kind") not in KINDS:
                 raise ValueError(f"{where}: sheets[{i}].items[{j}].kind は label / block / table です")
             if not item.get("name"):
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に name がありません")
             if item["kind"] in ("label", "block") and not item.get("label"):
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に label がありません")
+            for opt in ("name", "label", "title", "header"):
+                if item.get(opt) is not None and not isinstance(item[opt], str):
+                    raise ValueError(f"{where}: sheets[{i}].items[{j}].{opt} は文字列です: {item[opt]!r}")
+            if "offset" in item and not _is_offset(item["offset"]):
+                raise ValueError(
+                    f"{where}: sheets[{i}].items[{j}].offset は [行, 列] の整数 2 つです"
+                    f"（例: 右隣 [0, 1]、真下 [1, 0]）: {item['offset']!r}"
+                )
             if item["kind"] == "table" and not (item.get("header") and item.get("key")):
                 raise ValueError(f"{where}: sheets[{i}].items[{j}] に header と key が必要です")
             if item["kind"] == "table" and not _is_column_list(item["key"]):
@@ -44,6 +64,10 @@ def validate_config(conf: dict[str, Any], where: str) -> None:
                     raise ValueError(f"{where}: sheets[{i}].pair_by にはグループ ( ) が 1 つ必要です")
             except re.error as e:
                 raise ValueError(f"{where}: sheets[{i}].pair_by の正規表現が不正です: {e}") from None
+
+
+def _is_offset(v: Any) -> bool:
+    return isinstance(v, list) and len(v) == 2 and all(isinstance(n, int) and not isinstance(n, bool) for n in v)
 
 
 def _is_column_list(v: Any) -> bool:
@@ -202,8 +226,12 @@ def _compare_sheet(
             hr = item.get("header_rows")
             bt = excel_reader.read_table(b_ws, item["header"], item.get("title"), hr, b_ctx)
             at = excel_reader.read_table(a_ws, item["header"], item.get("title"), hr, a_ctx)
-            if bt is None or at is None:
-                out.append(Change("table_not_found", loc, "", "あり" if bt else "なし", "あり" if at else "なし"))
+            if bt is None and at is None:  # どちらにも無い: 表題・見出しの設定が設計書と合っていない
+                out.append(Change("table_not_found", loc, "", "なし", "なし"))
+                continue
+            if bt is None or at is None:  # 片方にだけある: 改訂で表を足した・消した（設定の誤りではない）
+                kind_ = "table_added" if bt is None else "table_removed"
+                out.append(Change(kind_, loc, "", "あり" if bt else "なし", "あり" if at else "なし"))
                 continue
             b_rows, a_rows = list(b_ctx.table_rows), list(a_ctx.table_rows)
             out += excel_diff.compare_table(loc, list(item["key"]), bt, at)
