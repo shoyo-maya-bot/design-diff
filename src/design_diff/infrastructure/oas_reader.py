@@ -311,12 +311,45 @@ def _success_schema(doc: dict, responses: dict, api_id: str, notes: list[str]) -
     return found[0][1]
 
 
+def _param_list(doc: dict, params: Any, where: str) -> list[dict]:
+    """parameters（$ref を解いた辞書の配列）. 無ければ空. 配列でない・name の無い要素は構造の誤り（OpenApiError）."""
+    if params is None:
+        return []
+    if not isinstance(params, list):
+        raise OpenApiError(f"{where} は配列で書きます（{type(params).__name__} になっています）")
+    out = []
+    for i, prm in enumerate(params):
+        prm = _resolve(doc, prm)
+        if not isinstance(prm, dict) or not isinstance(prm.get("name"), str):
+            raise OpenApiError(f"{where}[{i}] に name がありません")
+        out.append(prm)
+    return out
+
+
+def _param_key(prm: dict) -> tuple[str, str]:
+    """パラメーターを識別する (name, in). header の名前は大文字・小文字を区別しない（HTTP の規則）."""
+    loc = str(prm.get("in", "query")).strip().lower()
+    return (prm["name"].lower() if loc == "header" else prm["name"], loc)
+
+
+def _merge_params(common: list[dict], own: list[dict]) -> list[dict]:
+    """パス共通の parameters と操作の parameters を合わせる. 同じ name・in なら操作のものを使う（OpenAPI の規則で上書き）.
+
+    並びはパス共通の順に、操作で足したものを後ろに続ける.
+    """
+    merged: dict[tuple[str, str], dict] = {_param_key(prm): prm for prm in common}
+    for prm in own:
+        merged[_param_key(prm)] = prm
+    return list(merged.values())
+
+
 def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]], list[str], list[tuple[str, str]]]:
     spec: dict[str, dict[str, Any]] = {}
     notes: list[str] = []
     ops_of: dict[str, list[str]] = {}
     for p, item in (doc.get("paths") or {}).items():
-        common = item.get("parameters", [])
+        item = _resolve(doc, item)  # Path Item 自体が $ref のこともある
+        common = _param_list(doc, item.get("parameters"), f"paths.{p}.parameters")
         for m in METHODS:
             op = item.get(m)
             if not op:
@@ -326,8 +359,7 @@ def _read(doc: dict, source: str = "OpenAPI") -> tuple[dict[str, dict[str, Any]]
             if len(ops_of[api_id]) > 1:
                 continue  # 同じ API ID の 2 つ目からは読まない（最初の操作を使う）
             request: dict[str, dict[str, Any]] = {}
-            for prm in [*common, *op.get("parameters", [])]:
-                prm = _resolve(doc, prm)
+            for prm in _merge_params(common, _param_list(doc, op.get("parameters"), f"paths.{p}.{m}.parameters")):
                 schema = _shape(doc, prm.get("schema", {}))
                 add_field(
                     request,

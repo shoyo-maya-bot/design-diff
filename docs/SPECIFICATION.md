@@ -50,7 +50,8 @@
 | `value_changed` | 値の変更 | label / block |
 | `label_added` / `label_removed` | 追加・削除された項目 | 片方にだけラベルがある |
 | `label_not_found` | どちらにも無いラベル | **設定の見直しが必要** |
-| `table_not_found` | 表が見つからない | **設定の見直しが必要** |
+| `table_added` / `table_removed` | 追加・削除された表 | 片方にだけ表がある（改訂で表を足した・消した）。設定の誤りではないので、`--fail-on-diff` なしなら終了コード 0 |
+| `table_not_found` | どちらにも無い表 | **設定の見直しが必要**（`title`・`header` が設計書と合っていない） |
 | `column_added` / `column_removed` | 追加・削除された列 | |
 | `key_column_missing` | キー列が無い | **設定の見直しが必要**（行の比較はしない） |
 | `duplicate_key` | キーの重複 | **設定の見直しが必要**。重複した行も同じキーの中の出現順で対応付けて比べる（2 件目は「キー（2 件目）」） |
@@ -132,6 +133,8 @@ OpenAPI 側で同じ API ID（`x-api-id` → `operationId`）の操作が 2 つ�
 - 同じ名前で位置が違う項目（path パラメーターの `id` と body の `id` など）は別の項目として読み、位置の同じもの同士を比べます。レポートの項目名は `id（path）` のように位置を添えます
 - 名前が両側で 1 つずつなら、位置が違っても同じ項目として対応付け、`location_mismatch` を出します
 - 同じ名前・同じ位置の項目が 2 つ以上あるときは、後のもので上書きします
+- パス共通の `parameters`（Path Item に書いたもの）は、各操作の `parameters` と合わせて読みます。同じ `name` と `in` のパラメーターが両方にあれば、**操作のもの**を使います（OpenAPI の規則）。
+  header の名前は大文字・小文字を区別しません（`X-Request-Id` と `x-request-id` は同じ）。Path Item 自体が `$ref` でも読みます。`parameters` が配列でない・`name` の無い要素は構造の誤り（終了コード 2）です
 
 OpenAPI の YAML / JSON の構文の誤り、`paths` や操作・パラメーターが辞書でないなどの構造の誤り、ファイル内に無い `$ref` は、入力の誤り（終了コード 2）です。
 `spec` の設定（`config/spec.yaml`）は読み始める前に形を確かめ、`api_id`・`method`・`path` の `label` が無い、`offset` が整数 2 つでない、
